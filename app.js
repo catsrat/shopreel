@@ -93,7 +93,8 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null, myFollowing: new Set(), followCounts: {}, stories: [] };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null, myFollowing: new Set(), followCounts: {}, stories: [], explore: { q: '', vertical: '', creators: [] } };
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 const isOwner = () => !!(state.me && CFG.OWNER_EMAIL && state.me.email === CFG.OWNER_EMAIL);
 async function openPayouts() {
   activeTab = 'payouts'; state.payoutList = null; render();
@@ -391,6 +392,7 @@ function render() {
   else if (activeTab === 'profile') body = ProfileScreen();
   else if (activeTab === 'settings') body = SettingsScreen();
   else if (activeTab === 'creator') body = CreatorScreen();
+  else if (activeTab === 'explore') body = ExploreScreen();
   else if (activeTab === 'payouts') body = PayoutsScreen();
   app.innerHTML = body + (activeTab === 'settings' ? '' : NavBar());
   wireCommon();
@@ -400,6 +402,7 @@ function render() {
   if (activeTab === 'profile') wireProfile();
   if (activeTab === 'settings') wireSettings();
   if (activeTab === 'creator') wireCreator();
+  if (activeTab === 'explore') wireExplore();
   if (activeTab === 'payouts') wirePayouts();
 }
 
@@ -991,12 +994,71 @@ function wirePayouts() {
   app.querySelectorAll('.pay-one').forEach(b => b.onclick = () => doPay({ creator_id: b.dataset.id }, b));
 }
 
+/* ---------- explore / search ---------- */
+function ExploreScreen() {
+  const vert = state.explore.vertical || '';
+  return `
+  <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-28">
+    <div class="px-5 pt-12 pb-3">
+      <h1 class="text-2xl font-black mb-3">Explore</h1>
+      <input id="ex-search" value="${esc(state.explore.q || '')}" placeholder="Search creators, products, videos…" class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/15 outline-none focus:border-brand-500" />
+    </div>
+    <div id="ex-verts" class="px-5 flex gap-2 flex-wrap mb-4">
+      <button class="ex-vert px-3 py-1.5 rounded-full border text-sm ${!vert ? 'bg-brand-600 border-brand-600' : 'border-white/20'}" data-v="">All</button>
+      ${VERTICALS.map(v => `<button class="ex-vert px-3 py-1.5 rounded-full border text-sm ${vert === v.id ? 'bg-brand-600 border-brand-600' : 'border-white/20'}" data-v="${v.id}">${v.emoji} ${v.label}</button>`).join('')}
+    </div>
+    <div id="ex-results" class="px-5"></div>
+  </div>`;
+}
+function exResultsHTML() {
+  const q = (state.explore.q || '').toLowerCase();
+  const vert = state.explore.vertical || '';
+  let vids = state.posts.slice();
+  if (vert) vids = vids.filter(p => p.vertical === vert);
+  if (q) vids = vids.filter(p => (p.caption || '').toLowerCase().includes(q) || (p.handle || '').toLowerCase().includes(q) || (p.products || []).some(pr => (pr.title || '').toLowerCase().includes(q)));
+  vids.sort((a, b) => scoreOf(b) - scoreOf(a));
+  const creators = state.explore.creators || [];
+  return `
+    ${creators.length ? `<p class="text-sm font-semibold mb-2">Creators</p>
+      <div class="flex gap-4 overflow-x-auto no-scrollbar mb-5">${creators.map(c => `
+        <button class="ex-creator flex flex-col items-center gap-1 shrink-0" data-id="${c.id}">
+          ${avatarHTML(c.avatar_url, c.handle, 'w-14 h-14')}
+          <span class="text-[11px] text-white/80 max-w-[64px] truncate">@${esc(c.handle)}</span>
+        </button>`).join('')}</div>` : ''}
+    <p class="text-sm font-semibold mb-2">${q || vert ? 'Results' : '🔥 Trending'}</p>
+    ${vids.length ? `<div class="grid grid-cols-3 gap-1">${vids.map(p => `
+      <button class="ex-vid relative aspect-[9/16] bg-white/10 rounded-lg overflow-hidden" data-post="${p.id}">
+        ${p.poster_url ? `<img class="w-full h-full object-cover" src="${esc(p.poster_url)}" alt=""/>` : `<video class="w-full h-full object-cover" muted playsinline preload="metadata" src="${esc(p.video_url)}#t=0.1"></video>`}
+        <span class="absolute inset-x-1 bottom-1 text-[10px] text-white line-clamp-1 drop-shadow text-left">@${esc(p.handle)}</span>
+      </button>`).join('')}</div>` : `<p class="text-white/40 text-sm">No results.</p>`}`;
+}
+function wireExplore() {
+  const results = app.querySelector('#ex-results');
+  const refresh = () => { results.innerHTML = exResultsHTML(); results.querySelectorAll('.ex-creator').forEach(b => b.onclick = () => openCreator(b.dataset.id)); results.querySelectorAll('.ex-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post)); };
+  refresh();
+  const input = app.querySelector('#ex-search');
+  if (input) input.oninput = debounce(async () => {
+    const q = input.value.trim();
+    state.explore.q = q;
+    if (q) { const { data } = await sb.from('profiles').select('id, handle, avatar_url').ilike('handle', `%${q}%`).limit(12); state.explore.creators = data || []; }
+    else state.explore.creators = [];
+    refresh();
+  }, 300);
+  app.querySelectorAll('.ex-vert').forEach(b => b.onclick = () => {
+    state.explore.vertical = b.dataset.v;
+    app.querySelectorAll('.ex-vert').forEach(x => x.className = 'ex-vert px-3 py-1.5 rounded-full border text-sm border-white/20');
+    b.className = 'ex-vert px-3 py-1.5 rounded-full border text-sm bg-brand-600 border-brand-600';
+    refresh();
+  });
+}
+
 /* ---------- nav ---------- */
 function NavBar() {
   const ICONS = {
     feed: '<path d="M11.47 3.84a.75.75 0 011.06 0l8.69 8.69a.75.75 0 11-1.06 1.06l-.69-.69v6.69A1.875 1.875 0 0117.6 21.45H15a.75.75 0 01-.75-.75v-4.5a.75.75 0 00-.75-.75h-3a.75.75 0 00-.75.75v4.5a.75.75 0 01-.75.75H6.4a1.875 1.875 0 01-1.86-1.86V12.9l-.69.69a.75.75 0 11-1.06-1.06l8.68-8.69z"/>',
     dashboard: '<path d="M3 13.125c0-1.036.84-1.875 1.875-1.875h.75c1.036 0 1.875.84 1.875 1.875v6.75c0 1.035-.84 1.875-1.875 1.875h-.75A1.875 1.875 0 013 19.875v-6.75zM9.75 8.625c0-1.036.84-1.875 1.875-1.875h.75c1.036 0 1.875.84 1.875 1.875v11.25c0 1.035-.84 1.875-1.875 1.875h-.75a1.875 1.875 0 01-1.875-1.875V8.625zM16.5 4.125c0-1.036.84-1.875 1.875-1.875h.75c1.035 0 1.875.84 1.875 1.875v15.75c0 1.035-.84 1.875-1.875 1.875h-.75a1.875 1.875 0 01-1.875-1.875V4.125z"/>',
-    profile: '<path fill-rule="evenodd" d="M7.5 6a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM3.751 20.105a8.25 8.25 0 0116.498 0 .75.75 0 01-.437.695A18.683 18.683 0 0112 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 01-.437-.695z" clip-rule="evenodd"/>'
+    profile: '<path fill-rule="evenodd" d="M7.5 6a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM3.751 20.105a8.25 8.25 0 0116.498 0 .75.75 0 01-.437.695A18.683 18.683 0 0112 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 01-.437-.695z" clip-rule="evenodd"/>',
+    explore: '<path fill-rule="evenodd" d="M10.5 3.75a6.75 6.75 0 100 13.5 6.75 6.75 0 000-13.5zM2.25 10.5a8.25 8.25 0 1114.59 5.28l4.69 4.69a.75.75 0 11-1.06 1.06l-4.69-4.69A8.25 8.25 0 012.25 10.5z" clip-rule="evenodd"/>'
   };
   const tab = (id, label) => `
     <button class="nav-tab flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${activeTab===id?'text-white':'text-white/45'}" data-tab="${id}">
@@ -1011,13 +1073,14 @@ function NavBar() {
     <div class="relative flex items-stretch h-[4.25rem] rounded-[1.75rem] bg-white/10 backdrop-blur-2xl border border-white/15 shadow-2xl shadow-black/50 px-1">
       <div class="absolute inset-0 rounded-[1.75rem] bg-gradient-to-b from-white/10 to-transparent pointer-events-none"></div>
       ${tab('feed','Feed')}
-      ${tab('dashboard','Stats')}
+      ${tab('explore','Explore')}
       <button class="nav-tab flex-1 flex flex-col items-center justify-center gap-1" data-tab="create">
         <span class="w-10 h-8 rounded-2xl bg-gradient-to-br from-brand-500 to-purple-600 grid place-items-center shadow-lg shadow-brand-600/50 ${createActive?'ring-2 ring-white/50':''}">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         </span>
         <span class="text-[10px] font-semibold leading-none ${createActive?'text-white':'text-white/45'}">Create</span>
       </button>
+      ${tab('dashboard','Stats')}
       ${tab('profile','Profile')}
     </div>
   </nav>`;
