@@ -895,16 +895,46 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([arr], { type: mime });
 }
 
+// Free, in-browser AI moderation via NSFW.js (no API key, no payment).
+// Loaded lazily on first publish so it doesn't slow page load.
+let _nsfwModel = null;
+function _loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = res; s.onerror = () => rej(new Error('failed to load ' + src));
+    document.head.appendChild(s);
+  });
+}
+async function _ensureNsfw() {
+  if (_nsfwModel) return _nsfwModel;
+  if (!window.tf) await _loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
+  if (!window.nsfwjs) await _loadScript('https://cdn.jsdelivr.net/npm/nsfwjs@4.2.1/dist/nsfwjs.min.js');
+  _nsfwModel = await window.nsfwjs.load();   // downloads the model (~a few MB) once per session
+  return _nsfwModel;
+}
+function _loadImg(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+}
 async function moderate(frames) {
   if (!frames || !frames.length) return { allow: true };
   try {
-    const res = await fetch('/api/moderate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ frames })
-    });
-    if (!res.ok) return { allow: true, skipped: true };   // not deployed/configured yet
-    return await res.json();
-  } catch { return { allow: true, skipped: true }; }
+    const model = await _ensureNsfw();
+    let worst = 0;
+    for (const f of frames.slice(0, 3)) {
+      const img = await _loadImg(f);
+      const preds = await model.classify(img);
+      const m = Object.fromEntries(preds.map(p => [p.className, p.probability]));
+      const explicit = (m.Porn || 0) + (m.Hentai || 0);   // 'Sexy' (bikini/swimwear) is NOT blocked
+      if (explicit > worst) worst = explicit;
+    }
+    if (worst > 0.6) {
+      return { allow: false, reason: "This video looks like it contains explicit content, which isn't allowed. Swimwear and bikini are fine — nudity and sexual content are not." };
+    }
+    return { allow: true, score: worst };
+  } catch (e) {
+    console.warn('moderation skipped (model failed to load)', e);
+    return { allow: true, skipped: true };   // never hard-block on a technical failure
+  }
 }
 
 /* ---------- social actions ---------- */
