@@ -93,7 +93,8 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set() };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null };
+function openPostInFeed(postId) { state.feedFocusId = postId; activeTab = 'feed'; render(); }
 const likeCountOf = (p) => p.likes?.[0]?.count || 0;
 const commentCountOf = (p) => p.comments?.[0]?.count || 0;
 let activeTab = 'feed';
@@ -694,7 +695,7 @@ function CreatorScreen() {
 function wireCreator() {
   const back = app.querySelector('.cre-back');
   if (back) back.onclick = () => { activeTab = 'feed'; render(); };
-  app.querySelectorAll('.cre-vid').forEach(b => b.onclick = () => { activeTab = 'feed'; render(); });
+  app.querySelectorAll('.cre-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post));
 }
 
 /* ---------- nav ---------- */
@@ -713,7 +714,7 @@ function NavBar() {
     </button>`;
   const createActive = (activeTab==='create'||activeTab==='subscribe');
   return `
-  <nav class="absolute z-30 inset-x-3" style="bottom:calc(0.75rem + env(safe-area-inset-bottom))">
+  <nav class="fixed z-30 left-1/2 -translate-x-1/2 w-full max-w-[480px] px-3" style="bottom:calc(0.75rem + env(safe-area-inset-bottom))">
     <div class="relative flex items-stretch h-[4.25rem] rounded-[1.75rem] bg-white/10 backdrop-blur-2xl border border-white/15 shadow-2xl shadow-black/50 px-1">
       <div class="absolute inset-0 rounded-[1.75rem] bg-gradient-to-b from-white/10 to-transparent pointer-events-none"></div>
       ${tab('feed','Feed')}
@@ -839,6 +840,12 @@ function wireFeed() {
         break;
       }
     }
+  }
+  // if we arrived here by tapping a specific video, jump straight to it
+  if (state.feedFocusId) {
+    const t = app.querySelector(`[data-post="${state.feedFocusId}"]`);
+    state.feedFocusId = null;
+    if (t) t.scrollIntoView();
   }
   playVisible();
   setTimeout(playVisible, 250);   // retry once after layout settles
@@ -1186,6 +1193,7 @@ function wireCreate() {
     clearDraft();
     msg.className='text-center text-sm h-4 text-green-400'; msg.textContent='✅ Published!';
     await refreshPosts();
+    state.feedFocusId = post.id;   // jump the feed to the video we just posted
     setTimeout(() => { activeTab = 'feed'; render(); }, 500);
   };
 }
@@ -1217,7 +1225,7 @@ function wireSubscribe() {
 function wireProfile() {
   const gear = app.querySelector('.pf-settings');
   if (gear) gear.onclick = () => { activeTab = 'settings'; render(); };
-  app.querySelectorAll('.pf-vid').forEach(b => b.onclick = () => { activeTab = 'feed'; render(); });
+  app.querySelectorAll('.pf-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post));
   app.querySelectorAll('.pf-del-vid').forEach(b => b.onclick = async (e) => {
     e.stopPropagation();
     if (!confirm('Delete this video? This cannot be undone.')) return;
