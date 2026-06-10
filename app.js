@@ -175,14 +175,16 @@ async function loadStories() {
   state.stories = arr;
 }
 async function ensureFollowCounts(userId) {
-  if (!userId || state.followCounts[userId]) return;
-  state.followCounts[userId] = { followers: 0, following: 0 };
+  if (!userId) return;
   const [a, b] = await Promise.all([
     sb.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
     sb.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId)
   ]);
-  state.followCounts[userId] = { followers: a.count || 0, following: b.count || 0 };
-  if (activeTab === 'profile' || activeTab === 'creator') render();
+  const next = { followers: a.count || 0, following: b.count || 0 };
+  const prev = state.followCounts[userId];
+  state.followCounts[userId] = next;
+  const changed = !prev || prev.followers !== next.followers || prev.following !== next.following;
+  if (changed && (activeTab === 'profile' || activeTab === 'creator')) render();
 }
 async function toggleFollow(id) {
   if (!state.me || id === state.me.id) return;
@@ -196,6 +198,7 @@ async function toggleFollow(id) {
     b.className = `cre-follow shrink-0 px-5 py-2 rounded-full font-bold text-sm ${now ? 'bg-white/10 border border-white/20' : 'bg-brand-600'}`;
   });
   app.querySelectorAll(`.cre-followers[data-id="${id}"]`).forEach(el => el.textContent = fc.followers);
+  if (now) app.querySelectorAll(`.sr-follow[data-id="${id}"]`).forEach(b => b.remove());   // hide feed follow button once followed
   if (wasFollowing) await sb.from('follows').delete().eq('follower_id', state.me.id).eq('following_id', id);
   else await sb.from('follows').insert({ follower_id: state.me.id, following_id: id });
 }
@@ -457,10 +460,11 @@ function FeedScreen() {
 function StoryBar() {
   if (!state.me) return '';
   const mineGroup = state.stories.find(g => g.user_id === state.me.id);
-  const others = state.stories.filter(g => g.user_id !== state.me.id);
+  // only show stories from people you follow (plus your own)
+  const others = state.stories.filter(g => g.user_id !== state.me.id && state.myFollowing.has(g.user_id));
   const circle = (avatar, handle, has) => `<span class="w-14 h-14 rounded-full p-[2px] ${has ? 'bg-gradient-to-tr from-brand-500 to-purple-500' : 'bg-white/15'} block"><span class="w-full h-full rounded-full bg-ink-900 overflow-hidden grid place-items-center">${avatarHTML(avatar, handle, 'w-full h-full', 'text-xl')}</span></span>`;
   return `
-  <div class="absolute top-0 inset-x-0 z-20 pt-9 pb-2 px-3 bg-gradient-to-b from-black/70 via-black/30 to-transparent pointer-events-none">
+  <div class="absolute top-0 inset-x-0 z-20 pb-2 px-3 bg-gradient-to-b from-black/70 via-black/30 to-transparent pointer-events-none" style="padding-top:calc(2.5rem + env(safe-area-inset-top))">
     <div class="flex gap-3 overflow-x-auto no-scrollbar">
       <div class="story-add flex flex-col items-center gap-1 shrink-0 cursor-pointer pointer-events-auto">
         <span class="relative inline-block">${circle(state.me.avatar_url, state.me.handle, !!mineGroup)}
@@ -594,11 +598,14 @@ function PostCard(p) {
     </div>
 
     <div class="relative w-full post-actions" style="padding-right:4.75rem">
-      <button class="sr-creator flex items-center gap-2 mb-2" data-creator="${p.creator_id}">
-        ${avatarHTML(p.profiles?.avatar_url, p.handle)}
-        <span class="font-bold">@${esc(p.handle)}</span>
+      <div class="flex items-center gap-2 mb-2">
+        <button class="sr-creator flex items-center gap-2" data-creator="${p.creator_id}">
+          ${avatarHTML(p.profiles?.avatar_url, p.handle)}
+          <span class="font-bold">@${esc(p.handle)}</span>
+        </button>
         ${v?`<span class="text-xs bg-white/15 px-2 py-0.5 rounded-full">${v.emoji} ${v.label}</span>`:''}
-      </button>
+        ${(state.me && p.creator_id !== state.me.id && !state.myFollowing.has(p.creator_id)) ? `<button class="sr-follow text-xs font-bold bg-brand-600 px-3 py-1 rounded-full" data-id="${p.creator_id}">Follow</button>` : ''}
+      </div>
       <p class="text-sm text-white/90 mb-3 line-clamp-2">${esc(p.caption)}</p>
       <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1">
         ${(p.products||[]).map(pr=>`
@@ -1178,6 +1185,7 @@ function wireFeed() {
   const storyPlus = app.querySelector('.story-add-plus');
   if (storyPlus) storyPlus.onclick = (e) => { e.stopPropagation(); openStoryUploader(); };
   app.querySelectorAll('.story-open').forEach(b => b.onclick = () => openStoryViewer(b.dataset.uid));
+  app.querySelectorAll('.sr-follow').forEach(b => b.onclick = (e) => { e.stopPropagation(); toggleFollow(b.dataset.id); });
 
   // like / comment / save / share
   app.querySelectorAll('.sr-like').forEach(b => b.onclick = (e) => { e.stopPropagation(); toggleLike(b.dataset.post); });
