@@ -437,8 +437,11 @@ function CreateScreen() {
   const products = (Array.isArray(d.products) && d.products.length) ? d.products : [{}];
   return `
   <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-28">
-    <div class="px-5 pt-12 pb-4"><h1 class="text-2xl font-black">New shoppable video</h1>
-    <p class="text-white/50 text-sm">Upload a video and tag your affiliate products.</p></div>
+    <div class="px-5 pt-12 pb-4 flex items-start justify-between gap-3">
+      <div><h1 class="text-2xl font-black">New shoppable video</h1>
+      <p class="text-white/50 text-sm">Upload a video and tag your affiliate products.</p></div>
+      <button id="cr-discard" class="shrink-0 w-9 h-9 mt-1 grid place-items-center rounded-full bg-white/10 border border-white/15 text-white/70 text-sm" aria-label="Discard">✕</button>
+    </div>
     <div id="cr-form" class="px-5 space-y-5">
       <div>
         <p class="text-sm font-semibold mb-2">Video <span class="text-white/40 font-normal">· max 2 min</span></p>
@@ -1079,6 +1082,17 @@ function wireCreate() {
   };
   app.querySelector('#cr-record').onchange = (e) => onPick(e.target);
   app.querySelector('#cr-pick').onchange = (e) => onPick(e.target);
+
+  // discard / reset the whole create form
+  app.querySelector('#cr-discard').onclick = () => {
+    const hasContent = !!createFileObj
+      || app.querySelector('#cr-url').value.trim()
+      || app.querySelector('#cr-caption').value.trim()
+      || [...app.querySelectorAll('.cr-prod')].some(r => r.querySelector('.cr-p-title').value.trim() || r.querySelector('.cr-p-link').value.trim());
+    if (hasContent && !confirm('Discard this video and start over? Your current upload and details will be cleared.')) return;
+    clearDraft();           // wipes saved draft + the selected video
+    render();               // re-render a fresh, empty Create screen
+  };
 
   // save text fields as the user types
   app.querySelector('#cr-form').addEventListener('input', snapshot);
