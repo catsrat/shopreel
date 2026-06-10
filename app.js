@@ -93,7 +93,7 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null, myFollowing: new Set(), followCounts: {} };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null, myFollowing: new Set(), followCounts: {}, stories: [] };
 const isOwner = () => !!(state.me && CFG.OWNER_EMAIL && state.me.email === CFG.OWNER_EMAIL);
 async function openPayouts() {
   activeTab = 'payouts'; state.payoutList = null; render();
@@ -160,6 +160,19 @@ async function loadMyFollows() {
   if (!state.me) { state.myFollowing = new Set(); return; }
   const { data } = await sb.from('follows').select('following_id').eq('follower_id', state.me.id);
   state.myFollowing = new Set((data || []).map(x => x.following_id));
+}
+async function loadStories() {
+  const { data, error } = await sb.from('stories').select('*').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: true });
+  if (error) { state.stories = []; return; }
+  const groups = {};
+  (data || []).forEach(s => {
+    if (!groups[s.user_id]) groups[s.user_id] = { user_id: s.user_id, handle: s.handle, avatar_url: s.avatar_url, items: [] };
+    groups[s.user_id].items.push(s);
+  });
+  // own group first, then the rest
+  const arr = Object.values(groups);
+  arr.sort((a, b) => (a.user_id === state.me?.id ? -1 : b.user_id === state.me?.id ? 1 : 0));
+  state.stories = arr;
 }
 async function ensureFollowCounts(userId) {
   if (!userId || state.followCounts[userId]) return;
@@ -249,7 +262,7 @@ async function applySession(session) {
     if (!state.me || state.me.id !== session.user.id) {
       state.me = await ensureProfile(session.user);
     }
-    if (state.me) { await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout(), loadMyFollows()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
+    if (state.me) { await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout(), loadMyFollows(), loadStories()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
     // Signed in, but the profile row couldn't be created — show why.
     state.booted = true;
     app.innerHTML = InfoScreen('Signed in, but profile setup failed', _authError || 'Unknown database error', session.user.email);
@@ -310,7 +323,7 @@ function bindCountSync() {
 }
 async function syncCounts() {
   if (!state.me) return;
-  await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout(), loadMyFollows()]);
+  await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout(), loadMyFollows(), loadStories()]);
   if (activeTab === 'feed') {
     // update badges in place so the playing video isn't interrupted
     state.posts.forEach(p => {
@@ -435,12 +448,122 @@ function AuthScreen() {
 function FeedScreen() {
   // compute each video's feed rank ONCE (random jitter fixed per render), then sort
   const posts = state.posts.map(p => ({ p, r: feedRank(p) })).sort((a, b) => b.r - a.r).map(x => x.p);
-  if (!posts.length) {
-    return `<div class="h-full grid place-items-center text-center px-8 bg-black">
-      <div><div class="text-5xl mb-3">🎬</div><p class="font-bold text-lg">No videos yet</p>
-      <p class="text-white/60 mt-1">Tap ➕ Create to post the first shoppable video.</p></div></div>`;
+  const body = posts.length
+    ? `<div class="feed h-full overflow-y-scroll no-scrollbar bg-black">${posts.map(PostCard).join('')}<div class="h-20"></div></div>`
+    : `<div class="h-full grid place-items-center text-center px-8 bg-black"><div><div class="text-5xl mb-3">🎬</div><p class="font-bold text-lg">No videos yet</p><p class="text-white/60 mt-1">Tap ➕ Create to post the first shoppable video.</p></div></div>`;
+  return body + StoryBar();
+}
+
+function StoryBar() {
+  if (!state.me) return '';
+  const mineGroup = state.stories.find(g => g.user_id === state.me.id);
+  const others = state.stories.filter(g => g.user_id !== state.me.id);
+  const circle = (avatar, handle, has) => `<span class="w-14 h-14 rounded-full p-[2px] ${has ? 'bg-gradient-to-tr from-brand-500 to-purple-500' : 'bg-white/15'} block"><span class="w-full h-full rounded-full bg-ink-900 overflow-hidden grid place-items-center">${avatarHTML(avatar, handle, 'w-full h-full', 'text-xl')}</span></span>`;
+  return `
+  <div class="absolute top-0 inset-x-0 z-20 pt-9 pb-2 px-3 bg-gradient-to-b from-black/70 via-black/30 to-transparent pointer-events-none">
+    <div class="flex gap-3 overflow-x-auto no-scrollbar">
+      <div class="story-add flex flex-col items-center gap-1 shrink-0 cursor-pointer pointer-events-auto">
+        <span class="relative inline-block">${circle(state.me.avatar_url, state.me.handle, !!mineGroup)}
+          <span class="story-add-plus absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-brand-600 border-2 border-ink-900 grid place-items-center text-[11px] font-bold leading-none">+</span>
+        </span>
+        <span class="text-[10px] text-white/80">Your story</span>
+      </div>
+      ${others.map(g => `
+        <button class="story-open flex flex-col items-center gap-1 shrink-0 pointer-events-auto" data-uid="${g.user_id}">
+          ${circle(g.avatar_url, g.handle, true)}
+          <span class="text-[10px] text-white/80 max-w-[60px] truncate">@${esc(g.handle)}</span>
+        </button>`).join('')}
+    </div>
+  </div>`;
+}
+
+function openStoryUploader() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*,video/*';
+  input.onchange = async () => {
+    const file = input.files[0]; if (!file) return;
+    setUpload({ status: 'uploading', pct: 0 });
+    try {
+      const isVideo = (file.type || '').startsWith('video');
+      let media_url, poster_url = null, type = isVideo ? 'video' : 'image';
+      const stamp = Date.now();
+      if (isVideo && CFG.CF_CUSTOMER_CODE) {
+        const up = await fetch('/api/stream-upload-url', { method: 'POST' }).then(r => r.json()).catch(() => ({}));
+        if (!(up.enabled && up.uploadURL)) return setUpload({ status: 'error', msg: 'Stream unavailable' });
+        await uploadWithProgress(up.uploadURL, file, (pct) => { if (state.upload) { state.upload.pct = pct; const l = document.querySelector('#upload-banner .ub-label'); if (l) l.textContent = `Uploading… ${pct}%`; } });
+        const base = `https://customer-${CFG.CF_CUSTOMER_CODE}.cloudflarestream.com/${up.uid}`;
+        media_url = `${base}/manifest/video.m3u8`;
+        poster_url = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`;
+      } else {
+        const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+        const path = `${state.me.id}/story-${stamp}.${ext}`;
+        const { error } = await sb.storage.from('videos').upload(path, file, { contentType: file.type, upsert: true });
+        if (error) return setUpload({ status: 'error', msg: error.message });
+        media_url = sb.storage.from('videos').getPublicUrl(path).data.publicUrl;
+      }
+      const { error: insErr } = await sb.from('stories').insert({ user_id: state.me.id, handle: state.me.handle, avatar_url: state.me.avatar_url, media_url, poster_url, type });
+      if (insErr) return setUpload({ status: 'error', msg: insErr.message });
+      setUpload({ status: 'done' });
+      await loadStories();
+      if (activeTab === 'feed') render();
+      setTimeout(() => { state.upload = null; showUploadBanner(); }, 1500);
+    } catch (e) { setUpload({ status: 'error', msg: e.message }); }
+  };
+  input.click();
+}
+
+function openStoryViewer(startUid) {
+  let gi = state.stories.findIndex(g => g.user_id === startUid);
+  if (gi < 0) return;
+  let ii = 0, timer = null;
+  const wrap = document.createElement('div');
+  wrap.className = 'fixed inset-0 z-[60] bg-black';
+  document.body.appendChild(wrap);
+  const close = () => { if (timer) clearTimeout(timer); wrap.remove(); };
+  function show() {
+    const group = state.stories[gi];
+    if (!group) return close();
+    if (ii >= group.items.length) { gi++; ii = 0; return state.stories[gi] ? show() : close(); }
+    if (ii < 0) { gi--; if (gi < 0) return close(); ii = state.stories[gi].items.length - 1; return show(); }
+    const item = group.items[ii];
+    const isVideo = item.type === 'video';
+    const bars = group.items.map((_, k) => `<div class="flex-1 h-0.5 rounded bg-white/30 overflow-hidden"><div class="h-full bg-white" style="width:${k < ii ? '100%' : '0'}" ${k === ii ? 'data-active' : ''}></div></div>`).join('');
+    wrap.innerHTML = `
+      ${isVideo
+        ? `<video class="sv-media absolute inset-0 w-full h-full object-contain bg-black" autoplay playsinline ${item.poster_url ? `poster="${esc(item.poster_url)}"` : ''} ${(item.media_url || '').includes('.m3u8') ? `data-hls="${esc(item.media_url)}"` : `src="${esc(item.media_url)}"`}></video>`
+        : `<img class="absolute inset-0 w-full h-full object-contain bg-black" src="${esc(item.media_url)}" alt="" />`}
+      <div class="absolute top-0 inset-x-0 p-3" style="padding-top:calc(0.5rem + env(safe-area-inset-top))">
+        <div class="flex gap-1">${bars}</div>
+        <div class="flex items-center gap-2 mt-2">
+          ${avatarHTML(group.avatar_url, group.handle, 'w-8 h-8')}
+          <span class="font-bold text-sm">@${esc(group.handle)}</span>
+          <button class="sv-close ml-auto text-2xl text-white/90 leading-none px-2">✕</button>
+        </div>
+      </div>
+      <button class="sv-prev absolute left-0 top-20 bottom-0 w-1/3"></button>
+      <button class="sv-next absolute right-0 top-20 bottom-0 w-1/3"></button>`;
+    wrap.querySelector('.sv-close').onclick = close;
+    wrap.querySelector('.sv-prev').onclick = () => { ii--; show(); };
+    wrap.querySelector('.sv-next').onclick = () => { ii++; show(); };
+    const vid = wrap.querySelector('.sv-media');
+    if (vid && vid.hasAttribute('data-hls')) {
+      const url = vid.getAttribute('data-hls');
+      if (vid.canPlayType('application/vnd.apple.mpegurl') !== '') vid.src = url;
+      else _loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js').then(() => { if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls(); h.loadSource(url); h.attachMedia(vid); } });
+    }
+    if (timer) clearTimeout(timer);
+    const advance = () => { ii++; show(); };
+    const activeBar = wrap.querySelector('[data-active]');
+    if (isVideo && vid) {
+      vid.onended = advance;
+      vid.ontimeupdate = () => { if (vid.duration && activeBar) activeBar.style.width = (vid.currentTime / vid.duration * 100) + '%'; };
+      timer = setTimeout(advance, 30000);
+    } else {
+      if (activeBar) { activeBar.style.transition = 'width 5s linear'; requestAnimationFrame(() => { activeBar.style.width = '100%'; }); }
+      timer = setTimeout(advance, 5000);
+    }
   }
-  return `<div class="feed h-full overflow-y-scroll no-scrollbar bg-black">${posts.map(PostCard).join('')}<div class="h-20"></div></div>`;
+  show();
 }
 
 function PostCard(p) {
@@ -1048,6 +1171,13 @@ function wireFeed() {
 
   // tap a creator's name/avatar -> open their profile
   app.querySelectorAll('.sr-creator').forEach(b => b.onclick = (e) => { e.stopPropagation(); openCreator(b.dataset.creator); });
+
+  // stories
+  const storyAdd = app.querySelector('.story-add');
+  if (storyAdd) storyAdd.onclick = () => { const mine = state.stories.find(g => g.user_id === state.me.id); if (mine) openStoryViewer(state.me.id); else openStoryUploader(); };
+  const storyPlus = app.querySelector('.story-add-plus');
+  if (storyPlus) storyPlus.onclick = (e) => { e.stopPropagation(); openStoryUploader(); };
+  app.querySelectorAll('.story-open').forEach(b => b.onclick = () => openStoryViewer(b.dataset.uid));
 
   // like / comment / save / share
   app.querySelectorAll('.sr-like').forEach(b => b.onclick = (e) => { e.stopPropagation(); toggleLike(b.dataset.post); });
