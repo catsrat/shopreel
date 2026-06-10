@@ -581,7 +581,7 @@ function PostCard(p) {
     <div class="absolute right-3 bottom-40 z-20 flex flex-col items-center gap-4">
       <button class="sr-like flex flex-col items-center" data-post="${p.id}">
         <span class="sr-like-icon text-3xl drop-shadow">${state.myLikes.has(p.id)?'❤️':'🤍'}</span>
-        <span class="sr-like-count text-xs font-semibold drop-shadow">${likeCountOf(p)}</span>
+        <span class="sr-like-count text-xs font-semibold drop-shadow" data-post="${p.id}">${likeCountOf(p)}</span>
       </button>
       <button class="sr-comment flex flex-col items-center" data-post="${p.id}">
         <span class="text-3xl drop-shadow">💬</span>
