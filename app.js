@@ -910,6 +910,32 @@ function wireFeed() {
   // don't count a creator's own views/watch/taps (prevents self-inflating stats & gaming the feed)
   const ownPost = (postId) => { const p = state.posts.find(x=>x.id===postId); return !!(state.me && p && p.creator_id === state.me.id); };
 
+  // Lazy HLS: attach a Cloudflare stream to a video only when it's needed (current + next),
+  // never all at once — loading many HLS streams together stalls mobile.
+  let hlsLibPromise = null;
+  function ensureHlsLib() {
+    if (window.Hls) return Promise.resolve();
+    if (!hlsLibPromise) hlsLibPromise = _loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js').catch(() => {});
+    return hlsLibPromise;
+  }
+  function attachHlsTo(v) {
+    if (!v || v._hlsSet || !v.hasAttribute('data-hls')) return;
+    const url = v.getAttribute('data-hls');
+    v._hlsSet = true;
+    if (v.canPlayType('application/vnd.apple.mpegurl') !== '') {
+      v.src = url;   // native HLS (iOS/Safari)
+      v.addEventListener('error', () => { if ((v._retries = (v._retries || 0) + 1) <= 15) setTimeout(() => { v.src = url; v.load(); v.play().catch(() => {}); }, 3000); });
+    } else {
+      ensureHlsLib().then(() => {
+        if (window.Hls && window.Hls.isSupported()) {
+          const h = new window.Hls({ maxBufferLength: 10 });
+          h.loadSource(url); h.attachMedia(v); v._hls = h;
+          h.on(window.Hls.Events.ERROR, (_e, data) => { if (data.fatal && (v._retries = (v._retries || 0) + 1) <= 15) setTimeout(() => { try { h.loadSource(url); h.startLoad(); } catch (_) {} }, 3000); });
+        }
+      });
+    }
+  }
+
   const watchStart = {};
   const viewTimers = {};
   const countedView = new Set();   // one view per video per session
@@ -927,11 +953,11 @@ function wireFeed() {
       const postId = e.target.dataset.post;
       const vid = e.target.querySelector('.sr-video');
       if (e.isIntersecting) {
-        if (vid) { vid.preload = 'auto'; vid.muted = feedMuted; vid.play().catch(()=>{}); }
-        // buffer the NEXT video ahead of time so swiping feels instant
+        if (vid) { attachHlsTo(vid); vid.preload = 'auto'; vid.muted = feedMuted; vid.play().catch(()=>{}); }
+        // prepare ONLY the next video so swiping feels instant (never all at once)
         const nextEl = e.target.nextElementSibling;
         const nv = nextEl && nextEl.querySelector ? nextEl.querySelector('.sr-video') : null;
-        if (nv && nv.getAttribute('preload') !== 'auto') { nv.setAttribute('preload', 'auto'); try { nv.load(); } catch (_) {} }
+        if (nv) { attachHlsTo(nv); if (nv.getAttribute('preload') !== 'auto') { nv.setAttribute('preload', 'auto'); try { nv.load(); } catch (_) {} } }
         if (!watchStart[postId]) watchStart[postId] = Date.now();
         // count a view only after 2s of real watching (filters scroll-bys & most bots)
         if (!countedView.has(postId) && !ownPost(postId) && !viewTimers[postId]) {
@@ -951,36 +977,6 @@ function wireFeed() {
   }, { threshold: 0.6 });
   app.querySelectorAll('[data-post]').forEach(el => io.observe(el));
 
-  // Cloudflare Stream (HLS): native on Safari/iOS; load hls.js for other browsers.
-  (async function setupHls() {
-    const hlsVids = [...app.querySelectorAll('.sr-video[data-hls]')];
-    if (!hlsVids.length) return;
-    const nativeOk = hlsVids[0].canPlayType('application/vnd.apple.mpegurl') !== '';
-    if (!nativeOk && !window.Hls) { try { await _loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js'); } catch (_) {} }
-    hlsVids.forEach(v => {
-      if (v._hlsSet) return;
-      const url = v.getAttribute('data-hls');
-      if (v.canPlayType('application/vnd.apple.mpegurl') !== '') {
-        // native HLS (iOS/Safari): retry if the stream isn't processed yet
-        v.src = url; v._hlsSet = true;
-        v.addEventListener('error', () => {
-          if ((v._retries = (v._retries || 0) + 1) <= 15) {
-            setTimeout(() => { v.src = url; v.load(); v.play().catch(() => {}); }, 3000);
-          }
-        });
-      } else if (window.Hls && window.Hls.isSupported()) {
-        const h = new window.Hls({ maxBufferLength: 12 });
-        h.loadSource(url); h.attachMedia(v); v._hlsSet = true;
-        h.on(window.Hls.Events.ERROR, (_e, data) => {
-          if (data.fatal && (v._retries = (v._retries || 0) + 1) <= 15) {
-            setTimeout(() => { try { h.loadSource(url); h.startLoad(); } catch (_) {} }, 3000);
-          }
-        });
-      }
-    });
-    playVisible();
-  })();
-
   // Reliably start the video that's in view on first load (don't wait for a scroll/tap).
   function playVisible() {
     const mid = window.innerHeight * 0.5;
@@ -988,7 +984,7 @@ function wireFeed() {
       const r = el.getBoundingClientRect();
       if (r.top <= mid && r.bottom >= mid) {
         const v = el.querySelector('.sr-video');
-        if (v) { v.muted = feedMuted; v.play().catch(() => {}); }
+        if (v) { attachHlsTo(v); v.muted = feedMuted; v.play().catch(() => {}); }
         break;
       }
     }
