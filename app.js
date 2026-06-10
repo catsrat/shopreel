@@ -928,7 +928,11 @@ function wireFeed() {
       const postId = e.target.dataset.post;
       const vid = e.target.querySelector('.sr-video');
       if (e.isIntersecting) {
-        if (vid) { vid.muted = feedMuted; vid.play().catch(()=>{}); }
+        if (vid) { vid.preload = 'auto'; vid.muted = feedMuted; vid.play().catch(()=>{}); }
+        // buffer the NEXT video ahead of time so swiping feels instant
+        const nextEl = e.target.nextElementSibling;
+        const nv = nextEl && nextEl.querySelector ? nextEl.querySelector('.sr-video') : null;
+        if (nv && nv.getAttribute('preload') !== 'auto') { nv.setAttribute('preload', 'auto'); try { nv.load(); } catch (_) {} }
         if (!watchStart[postId]) watchStart[postId] = Date.now();
         // count a view only after 2s of real watching (filters scroll-bys & most bots)
         if (!countedView.has(postId) && !ownPost(postId) && !viewTimers[postId]) {
