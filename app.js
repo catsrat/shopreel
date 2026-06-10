@@ -1062,6 +1062,22 @@ async function extractFrames(file) {
     });
   });
 }
+// Upload a file with progress (fetch can't report upload progress; XHR can).
+function uploadWithProgress(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    const fd = new FormData();
+    fd.append('file', file);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve(xhr) : reject(new Error('upload failed (' + xhr.status + ')'));
+    xhr.onerror = () => reject(new Error('network error during upload'));
+    xhr.ontimeout = () => reject(new Error('upload timed out'));
+    xhr.timeout = 10 * 60 * 1000;   // 10 min ceiling
+    xhr.send(fd);
+  });
+}
+
 function dataUrlToBlob(dataUrl) {
   const [meta, b64] = dataUrl.split(',');
   const mime = (meta.match(/:(.*?);/) || [, 'image/jpeg'])[1];
@@ -1309,9 +1325,10 @@ function wireCreate() {
         // ---- Cloudflare Stream: fast adaptive streaming + global CDN ----
         const up = await fetch('/api/stream-upload-url', { method: 'POST' }).then(r => r.json()).catch(() => ({}));
         if (up.enabled && up.uploadURL) {
-          const fd = new FormData(); fd.append('file', createFileObj);
-          const cf = await fetch(up.uploadURL, { method: 'POST', body: fd });
-          if (!cf.ok) return setErr('Video upload failed (stream).');
+          try {
+            await uploadWithProgress(up.uploadURL, createFileObj, (pct) => setOk(`Uploading… ${pct}%`));
+          } catch (e) { return setErr('Video upload failed: ' + e.message); }
+          setOk('Processing…');
           const base = `https://customer-${CFG.CF_CUSTOMER_CODE}.cloudflarestream.com/${up.uid}`;
           videoUrl = `${base}/manifest/video.m3u8`;
           posterUrl = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`;
