@@ -388,7 +388,7 @@ function PostCard(p) {
   const v = VERTICALS.find(x=>x.id===p.vertical);
   return `
   <div class="snap relative h-[100dvh] w-full bg-black flex items-end" data-post="${p.id}">
-    <video class="sr-video absolute inset-0 w-full h-full object-cover" muted loop playsinline preload="metadata" src="${esc(p.video_url)}"></video>
+    <video class="sr-video absolute inset-0 w-full h-full object-cover" muted loop playsinline preload="metadata" ${p.poster_url?`poster="${esc(p.poster_url)}"`:''} src="${esc(p.video_url)}"></video>
     <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none"></div>
     <button class="sr-mute absolute top-4 right-4 z-20 w-10 h-10 rounded-full bg-black/40 backdrop-blur grid place-items-center text-lg">🔇</button>
 
@@ -581,7 +581,9 @@ function ProfileScreen() {
       <p class="text-sm font-semibold mb-2">My videos <span class="text-white/40 font-normal">(${mine.length})</span></p>
       ${mine.length ? `<div class="grid grid-cols-3 gap-1">${mine.map(p=>`
           <div class="relative aspect-[9/16] bg-white/10 rounded-lg overflow-hidden">
-            <video class="pf-vid w-full h-full object-cover" muted playsinline preload="metadata" src="${esc(p.video_url)}" data-post="${p.id}"></video>
+            ${p.poster_url
+              ? `<img class="pf-vid w-full h-full object-cover" src="${esc(p.poster_url)}" data-post="${p.id}" alt="" />`
+              : `<video class="pf-vid w-full h-full object-cover" muted playsinline preload="metadata" src="${esc(p.video_url)}#t=0.1" data-post="${p.id}"></video>`}
             <span class="absolute inset-x-1 bottom-1 text-[10px] text-white line-clamp-1 drop-shadow text-left pointer-events-none">${esc(p.caption)||''}</span>
             <span class="absolute top-1 right-1 text-[10px] bg-black/50 rounded px-1 pointer-events-none">${tapsOf(p)} 👆</span>
             <button class="pf-del-vid absolute top-1 left-1 w-7 h-7 rounded-full bg-black/60 backdrop-blur grid place-items-center text-xs" data-post="${p.id}" data-url="${esc(p.video_url)}" aria-label="Delete video">🗑️</button>
@@ -594,7 +596,7 @@ function ProfileScreen() {
       <p class="text-sm font-semibold mb-2">🔖 Saved <span class="text-white/40 font-normal">(${saved.length})</span></p>
       ${saved.length ? `<div class="grid grid-cols-3 gap-1">${saved.map(p=>`
         <button class="pf-vid relative aspect-[9/16] bg-white/10 rounded-lg overflow-hidden" data-post="${p.id}">
-          <video class="w-full h-full object-cover" muted playsinline preload="metadata" src="${esc(p.video_url)}"></video>
+          ${p.poster_url ? `<img class="w-full h-full object-cover" src="${esc(p.poster_url)}" alt="" />` : `<video class="w-full h-full object-cover" muted playsinline preload="metadata" src="${esc(p.video_url)}#t=0.1"></video>`}
           <span class="absolute inset-x-1 bottom-1 text-[10px] text-white line-clamp-1 drop-shadow text-left">@${esc(p.handle)}</span>
         </button>`).join('')}</div>`
         : `<p class="text-white/40 text-sm">Videos you save will appear here.</p>`}
@@ -668,7 +670,7 @@ function CreatorScreen() {
       <p class="text-sm font-semibold mb-2">Videos</p>
       ${vids.length ? `<div class="grid grid-cols-3 gap-1">${vids.map(p=>`
         <button class="cre-vid relative aspect-[9/16] bg-white/10 rounded-lg overflow-hidden" data-post="${p.id}">
-          <video class="w-full h-full object-cover" muted playsinline preload="metadata" src="${esc(p.video_url)}"></video>
+          ${p.poster_url ? `<img class="w-full h-full object-cover" src="${esc(p.poster_url)}" alt="" />` : `<video class="w-full h-full object-cover" muted playsinline preload="metadata" src="${esc(p.video_url)}#t=0.1"></video>`}
           <span class="absolute inset-x-1 bottom-1 text-[10px] text-white line-clamp-1 drop-shadow text-left">${esc(p.caption)||''}</span>
         </button>`).join('')}</div>`
         : `<p class="text-white/40 text-sm">No videos yet.</p>`}
@@ -884,6 +886,15 @@ async function extractFrames(file) {
     });
   });
 }
+function dataUrlToBlob(dataUrl) {
+  const [meta, b64] = dataUrl.split(',');
+  const mime = (meta.match(/:(.*?);/) || [, 'image/jpeg'])[1];
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
 async function moderate(frames) {
   if (!frames || !frames.length) return { allow: true };
   try {
@@ -1044,10 +1055,11 @@ function wireCreate() {
     const setOk = (t) => { msg.className='text-center text-sm h-4 text-white/60'; msg.textContent=t; };
 
     // 1) Inline AI safety check — runs now so there's no "pending" wait after publishing.
+    let frames = [];
     if (createFileObj) {
       setOk('🔍 Checking your video…');
       const t0 = Date.now();
-      const frames = await extractFrames(createFileObj);
+      frames = await extractFrames(createFileObj);
       const verdict = await moderate(frames);
       const elapsed = Date.now() - t0;
       if (elapsed < 900) await new Promise(r => setTimeout(r, 900 - elapsed)); // keep the step visible
@@ -1055,17 +1067,26 @@ function wireCreate() {
     }
     setOk('Uploading…');
 
-    let videoUrl = url;
+    let videoUrl = url, posterUrl = null;
     if (createFileObj) {
+      const stamp = Date.now();
       const ext = (createFileObj.name.split('.').pop() || 'mp4').toLowerCase();
-      const path = `${state.me.id}/${Date.now()}.${ext}`;
+      const path = `${state.me.id}/${stamp}.${ext}`;
       const { error: upErr } = await sb.storage.from('videos').upload(path, createFileObj, { contentType: createFileObj.type });
       if (upErr) return setErr('Video upload failed: ' + upErr.message);
       videoUrl = sb.storage.from('videos').getPublicUrl(path).data.publicUrl;
+      // poster thumbnail (first frame): shows instantly while video loads + fixes black grid thumbnails
+      if (frames[0]) {
+        try {
+          const posterPath = `${state.me.id}/poster-${stamp}.jpg`;
+          await sb.storage.from('videos').upload(posterPath, dataUrlToBlob(frames[0]), { contentType: 'image/jpeg', upsert: true });
+          posterUrl = sb.storage.from('videos').getPublicUrl(posterPath).data.publicUrl;
+        } catch (_) { /* poster is optional */ }
+      }
     }
 
     const { data: post, error: pErr } = await sb.from('posts')
-      .insert({ creator_id: state.me.id, handle: state.me.handle, vertical, caption, video_url: videoUrl })
+      .insert({ creator_id: state.me.id, handle: state.me.handle, vertical, caption, video_url: videoUrl, poster_url: posterUrl })
       .select().single();
     if (pErr) return setErr('Could not save post: ' + pErr.message);
 

@@ -27,12 +27,14 @@ create table if not exists posts (
   vertical text default 'beauty',
   caption text,
   video_url text not null,
+  poster_url text,
   views int default 0,
   watch_ms bigint default 0,
   shares int default 0,
   created_at timestamptz default now()
 );
 alter table posts add column if not exists shares int default 0;
+alter table posts add column if not exists poster_url text;
 
 create table if not exists products (
   id uuid primary key default gen_random_uuid(),
