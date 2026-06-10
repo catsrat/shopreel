@@ -1136,7 +1136,7 @@ function NavBar() {
     </button>`;
   const createActive = (activeTab==='create'||activeTab==='subscribe');
   return `
-  <nav class="fixed z-30 left-1/2 -translate-x-1/2 w-full max-w-[480px] px-3" style="bottom:calc(0.75rem + env(safe-area-inset-bottom))">
+  <nav class="fixed z-30 left-1/2 -translate-x-1/2 w-full max-w-[480px] px-3" style="bottom:calc(0.2rem + env(safe-area-inset-bottom))">
     <div class="relative flex items-stretch h-[4.25rem] rounded-[1.75rem] bg-white/10 backdrop-blur-2xl border border-white/15 shadow-2xl shadow-black/50 px-1">
       <div class="absolute inset-0 rounded-[1.75rem] bg-gradient-to-b from-white/10 to-transparent pointer-events-none"></div>
       ${tab('feed','Feed')}
