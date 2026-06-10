@@ -1439,7 +1439,9 @@ async function moderate(frames) {
   try {
     const model = await _ensureNsfw();
     let worst = 0;
-    for (const f of frames.slice(0, 3)) {
+    // check the middle + last frame only (lighter on the CPU), yielding between so the feed doesn't freeze
+    for (const f of [frames[Math.floor(frames.length / 2)], frames[frames.length - 1]].filter(Boolean)) {
+      await new Promise(r => setTimeout(r, 0));   // let the UI repaint between heavy inferences
       const img = await _loadImg(f);
       const preds = await model.classify(img);
       const m = Object.fromEntries(preds.map(p => [p.className, p.probability]));
@@ -1620,8 +1622,8 @@ async function runUpload(job) {
 
     clearDraft();
     setUpload({ status: 'done' });
-    await refreshPosts();
-    if (activeTab === 'feed') { state.feedFocusId = post.id; render(); }
+    await refreshPosts();   // new video is now in state; it appears next feed load (by then it's processed) — no disruptive rebuild
+    if (activeTab !== 'feed') render();   // refresh other screens (e.g. profile grid) but never interrupt the feed you're watching
     setTimeout(() => { state.upload = null; showUploadBanner(); }, 2500);
   } catch (e) {
     setUpload({ status: 'error', msg: e.message });
