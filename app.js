@@ -93,7 +93,7 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null, myFollowing: new Set(), followCounts: {}, stories: [], explore: { q: '', vertical: '', creators: [] } };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null, myFollowing: new Set(), followCounts: {}, stories: [], explore: { q: '', vertical: '', creators: [] }, peopleList: null };
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 const isOwner = () => !!(state.me && CFG.OWNER_EMAIL && state.me.email === CFG.OWNER_EMAIL);
 async function openPayouts() {
@@ -421,6 +421,7 @@ function render() {
   else if (activeTab === 'settings') body = SettingsScreen();
   else if (activeTab === 'creator') body = CreatorScreen();
   else if (activeTab === 'explore') body = ExploreScreen();
+  else if (activeTab === 'people') body = PeopleScreen();
   else if (activeTab === 'payouts') body = PayoutsScreen();
   app.innerHTML = body + (activeTab === 'settings' ? '' : NavBar());
   wireCommon();
@@ -431,6 +432,7 @@ function render() {
   if (activeTab === 'settings') wireSettings();
   if (activeTab === 'creator') wireCreator();
   if (activeTab === 'explore') wireExplore();
+  if (activeTab === 'people') wirePeople();
   if (activeTab === 'payouts') wirePayouts();
 }
 
@@ -816,7 +818,7 @@ function ProfileScreen() {
     <div class="px-5 mt-5 flex items-center gap-4">
       ${avatarHTML(u.avatar_url, u.handle, 'w-16 h-16', 'text-2xl font-black')}
       <div><p class="text-xl font-bold">@${esc(u.handle)}</p>
-      <p class="text-white/50 text-sm mt-0.5"><b class="text-white">${(state.followCounts[u.id]||{}).followers||0}</b> followers · <b class="text-white">${(state.followCounts[u.id]||{}).following||0}</b> following</p>
+      <p class="text-white/50 text-sm mt-0.5"><button class="pf-followers"><b class="text-white">${(state.followCounts[u.id]||{}).followers||0}</b> followers</button> · <button class="pf-following"><b class="text-white">${(state.followCounts[u.id]||{}).following||0}</b> following</button></p>
       <div class="flex gap-1.5 mt-1">
         ${v?`<span class="text-xs bg-white/10 px-2 py-0.5 rounded-full">${v.emoji} ${v.label}</span>`:''}
       </div></div>
@@ -935,7 +937,7 @@ function CreatorScreen() {
       ${avatarHTML(u.avatar_url, u.handle, 'w-16 h-16', 'text-2xl font-black')}
       <div class="flex-1 min-w-0">
         ${v?`<span class="text-xs bg-white/10 px-2 py-0.5 rounded-full">${v.emoji} ${v.label}</span>`:''}
-        <p class="text-white/50 text-sm mt-1"><b class="cre-followers text-white" data-id="${u.id}">${fc.followers}</b> followers · <b class="text-white">${vids.length}</b> video${vids.length===1?'':'s'}</p>
+        <p class="text-white/50 text-sm mt-1"><button class="cre-followers-btn" data-id="${u.id}"><b class="cre-followers text-white" data-id="${u.id}">${fc.followers}</b> followers</button> · <b class="text-white">${vids.length}</b> video${vids.length===1?'':'s'}</p>
       </div>
       ${state.me && state.me.id===u.id ? '' : `<button class="cre-follow shrink-0 px-5 py-2 rounded-full font-bold text-sm ${following?'bg-white/10 border border-white/20':'bg-brand-600'}" data-id="${u.id}">${following?'Following':'Follow'}</button>`}
     </div>
@@ -957,6 +959,7 @@ function wireCreator() {
   app.querySelectorAll('.cre-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post));
   if (state.viewProfile) ensureFollowCounts(state.viewProfile.id);
   app.querySelectorAll('.cre-follow').forEach(b => b.onclick = (e) => { e.stopPropagation(); toggleFollow(b.dataset.id); });
+  const cfb = app.querySelector('.cre-followers-btn'); if (cfb) cfb.onclick = () => openPeopleList(cfb.dataset.id, 'followers');
 }
 
 /* ---------- payouts (owner admin) ---------- */
@@ -1021,6 +1024,41 @@ function wirePayouts() {
   const payAll = app.querySelector('#pay-all');
   if (payAll) payAll.onclick = () => doPay({ all: true }, payAll);
   app.querySelectorAll('.pay-one').forEach(b => b.onclick = () => doPay({ creator_id: b.dataset.id }, b));
+}
+
+/* ---------- followers / following list ---------- */
+async function openPeopleList(userId, mode) {
+  state.peopleList = { mode, items: [], loading: true };
+  activeTab = 'people'; render();
+  let ids = [];
+  if (mode === 'followers') { const { data } = await sb.from('follows').select('follower_id').eq('following_id', userId); ids = (data || []).map(x => x.follower_id); }
+  else { const { data } = await sb.from('follows').select('following_id').eq('follower_id', userId); ids = (data || []).map(x => x.following_id); }
+  let items = [];
+  if (ids.length) { const { data } = await sb.from('profiles').select('id, handle, avatar_url').in('id', ids); items = data || []; }
+  state.peopleList = { mode, items };
+  render();
+}
+function PeopleScreen() {
+  const pl = state.peopleList || { mode: '', items: [] };
+  return `
+  <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-28">
+    <div class="px-5 pt-12 flex items-center gap-3">
+      <button class="pl-back w-10 h-10 grid place-items-center rounded-full bg-white/10 border border-white/15 text-lg">←</button>
+      <h1 class="text-2xl font-black capitalize">${pl.mode || 'People'}</h1>
+    </div>
+    <div class="px-5 mt-4 space-y-2">
+      ${pl.loading ? `<p class="text-white/40 text-center mt-8">Loading…</p>`
+        : (pl.items.length ? pl.items.map(u => `
+          <button class="pl-item w-full flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl p-3" data-id="${u.id}">
+            ${avatarHTML(u.avatar_url, u.handle, 'w-10 h-10')}
+            <span class="font-bold">@${esc(u.handle)}</span>
+          </button>`).join('') : `<p class="text-white/40 text-center mt-8">No one yet.</p>`)}
+    </div>
+  </div>`;
+}
+function wirePeople() {
+  const back = app.querySelector('.pl-back'); if (back) back.onclick = () => { activeTab = 'profile'; render(); };
+  app.querySelectorAll('.pl-item').forEach(b => b.onclick = () => openCreator(b.dataset.id));
 }
 
 /* ---------- explore / search ---------- */
@@ -1714,6 +1752,8 @@ function wireProfile() {
   const gear = app.querySelector('.pf-settings');
   if (gear) gear.onclick = () => { activeTab = 'settings'; render(); };
   if (state.me) ensureFollowCounts(state.me.id);
+  const pfFollowers = app.querySelector('.pf-followers'); if (pfFollowers) pfFollowers.onclick = () => openPeopleList(state.me.id, 'followers');
+  const pfFollowing = app.querySelector('.pf-following'); if (pfFollowing) pfFollowing.onclick = () => openPeopleList(state.me.id, 'following');
   app.querySelectorAll('.pf-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post));
   app.querySelectorAll('.pf-del-vid').forEach(b => b.onclick = async (e) => {
     e.stopPropagation();
