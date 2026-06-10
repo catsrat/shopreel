@@ -187,7 +187,11 @@ async function ensureProfile(user) {
 }
 
 /* ---------- boot ---------- */
+let _appliedUid;
 async function applySession(session) {
+  const uid = session?.user?.id || null;
+  if (state.booted && uid === _appliedUid) return;   // same user already shown — skip redundant re-render
+  _appliedUid = uid;
   if (session?.user) {
     if (!state.me || state.me.id !== session.user.id) {
       state.me = await ensureProfile(session.user);
@@ -823,6 +827,23 @@ function wireFeed() {
     });
   }, { threshold: 0.6 });
   app.querySelectorAll('[data-post]').forEach(el => io.observe(el));
+
+  // Reliably start the video that's in view on first load (don't wait for a scroll/tap).
+  function playVisible() {
+    const mid = window.innerHeight * 0.5;
+    for (const el of app.querySelectorAll('[data-post]')) {
+      const r = el.getBoundingClientRect();
+      if (r.top <= mid && r.bottom >= mid) {
+        const v = el.querySelector('.sr-video');
+        if (v) { v.muted = feedMuted; v.play().catch(() => {}); }
+        break;
+      }
+    }
+  }
+  playVisible();
+  setTimeout(playVisible, 250);   // retry once after layout settles
+  const unlock = () => { playVisible(); document.removeEventListener('pointerdown', unlock); };
+  document.addEventListener('pointerdown', unlock, { once: true });   // unlock autoplay on first touch
 
   // mute / unmute (tap the speaker icon OR the video)
   function applyMute() {
