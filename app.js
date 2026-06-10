@@ -961,8 +961,23 @@ function wireFeed() {
     hlsVids.forEach(v => {
       if (v._hlsSet) return;
       const url = v.getAttribute('data-hls');
-      if (v.canPlayType('application/vnd.apple.mpegurl') !== '') { v.src = url; v._hlsSet = true; }
-      else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls({ maxBufferLength: 12 }); h.loadSource(url); h.attachMedia(v); v._hlsSet = true; }
+      if (v.canPlayType('application/vnd.apple.mpegurl') !== '') {
+        // native HLS (iOS/Safari): retry if the stream isn't processed yet
+        v.src = url; v._hlsSet = true;
+        v.addEventListener('error', () => {
+          if ((v._retries = (v._retries || 0) + 1) <= 15) {
+            setTimeout(() => { v.src = url; v.load(); v.play().catch(() => {}); }, 3000);
+          }
+        });
+      } else if (window.Hls && window.Hls.isSupported()) {
+        const h = new window.Hls({ maxBufferLength: 12 });
+        h.loadSource(url); h.attachMedia(v); v._hlsSet = true;
+        h.on(window.Hls.Events.ERROR, (_e, data) => {
+          if (data.fatal && (v._retries = (v._retries || 0) + 1) <= 15) {
+            setTimeout(() => { try { h.loadSource(url); h.startLoad(); } catch (_) {} }, 3000);
+          }
+        });
+      }
     });
     playVisible();
   })();
