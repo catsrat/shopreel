@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1" />
+  <title>ShopReel</title>
+  <meta name="description" content="Turn your videos into shoppable storefronts. Earn from your first upload." />
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#db2777" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="ShopReel" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        colors: { brand:{50:'#fdf2f8',100:'#fce7f3',500:'#ec4899',600:'#db2777',700:'#be185d'}, ink:{900:'#0f0f12',800:'#18181b'} },
+        fontFamily: { sans:['Inter','system-ui','sans-serif'] }
+      }}
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    html,body{height:100%;}
+    body{ -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+    .no-scrollbar::-webkit-scrollbar{display:none;}
+    .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none;}
+    .feed{ scroll-snap-type:y mandatory; }
+    .snap{ scroll-snap-align:start; }
+    .safe-bottom{ padding-bottom:env(safe-area-inset-bottom); }
+    /* lift a post's caption + product chips above the bottom nav (h-16 = 4rem) */
+    .post-actions{ padding:1rem 1rem calc(5.25rem + env(safe-area-inset-bottom)); }
+  </style>
+</head>
+<body class="font-sans bg-ink-900 text-white select-none">
+  <div id="app" class="max-w-[480px] mx-auto h-[100dvh] relative bg-black overflow-hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(()=>{}));
+    }
+  </script>
+</body>
+</html>

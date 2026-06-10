@@ -1,0 +1,11 @@
+{
+  "name": "shopreel-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ShopReel — shoppable video PWA",
+  "dependencies": {
+    "stripe": "^17.7.0",
+    "@supabase/supabase-js": "^2.48.1"
+  }
+}
