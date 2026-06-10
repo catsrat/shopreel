@@ -93,7 +93,7 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null };
 const isOwner = () => !!(state.me && CFG.OWNER_EMAIL && state.me.email === CFG.OWNER_EMAIL);
 async function openPayouts() {
   activeTab = 'payouts'; state.payoutList = null; render();
@@ -1231,6 +1231,82 @@ async function openComments(postId) {
   wrap.querySelector('.cm-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 }
 
+/* ---------- background upload (post & keep browsing, like TikTok/Instagram) ---------- */
+function setUpload(u) { state.upload = u; showUploadBanner(); }
+function showUploadBanner() {
+  let el = document.getElementById('upload-banner');
+  const u = state.upload;
+  if (!u) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'upload-banner'; document.body.appendChild(el); }
+  const busy = u.status !== 'done' && u.status !== 'error';
+  const spinner = busy ? '<span class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>' : '';
+  const label = u.status === 'checking' ? '🔍 Checking video…'
+    : u.status === 'uploading' ? `Uploading… ${u.pct || 0}%`
+    : u.status === 'processing' ? '⏳ Processing…'
+    : u.status === 'done' ? '✅ Posted!'
+    : '⚠️ ' + (u.msg || 'Upload failed');
+  const color = u.status === 'error' ? 'bg-red-600' : u.status === 'done' ? 'bg-green-600' : 'bg-ink-900/90';
+  el.className = `fixed z-50 left-1/2 -translate-x-1/2 ${color} backdrop-blur text-white text-sm font-semibold px-4 py-2 rounded-full shadow-xl border border-white/15 flex items-center gap-2`;
+  el.style.top = 'calc(0.6rem + env(safe-area-inset-top))';
+  el.innerHTML = `${spinner}<span class="ub-label">${esc(label)}</span>${u.status === 'error' ? '<button class="ub-dismiss ml-1 text-white/70">✕</button>' : ''}`;
+  const dis = el.querySelector('.ub-dismiss');
+  if (dis) dis.onclick = () => { state.upload = null; showUploadBanner(); };
+}
+function startBackgroundUpload(job) {
+  setUpload({ status: 'checking', pct: 0 });
+  activeTab = 'feed'; render();   // let the user browse immediately
+  runUpload(job);                 // fire and forget
+}
+async function runUpload(job) {
+  try {
+    let frames = [];
+    if (job.fileObj) {
+      frames = await extractFrames(job.fileObj);
+      const verdict = await moderate(frames);
+      if (!verdict.allow) return setUpload({ status: 'error', msg: verdict.reason || 'Not allowed' });
+    }
+    setUpload({ status: 'uploading', pct: 0 });
+    let videoUrl = job.url, posterUrl = null;
+    if (job.fileObj) {
+      const stamp = Date.now();
+      if (CFG.CF_CUSTOMER_CODE) {
+        const up = await fetch('/api/stream-upload-url', { method: 'POST' }).then(r => r.json()).catch(() => ({}));
+        if (!(up.enabled && up.uploadURL)) return setUpload({ status: 'error', msg: 'Stream unavailable' });
+        try {
+          await uploadWithProgress(up.uploadURL, job.fileObj, (pct) => {
+            if (state.upload) { state.upload.pct = pct; const l = document.querySelector('#upload-banner .ub-label'); if (l) l.textContent = `Uploading… ${pct}%`; else showUploadBanner(); }
+          });
+        } catch (e) { return setUpload({ status: 'error', msg: e.message }); }
+        const base = `https://customer-${CFG.CF_CUSTOMER_CODE}.cloudflarestream.com/${up.uid}`;
+        videoUrl = `${base}/manifest/video.m3u8`;
+        posterUrl = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`;
+      } else {
+        const ext = (job.fileObj.name.split('.').pop() || 'mp4').toLowerCase();
+        const path = `${state.me.id}/${stamp}.${ext}`;
+        const { error: upErr } = await sb.storage.from('videos').upload(path, job.fileObj, { contentType: job.fileObj.type });
+        if (upErr) return setUpload({ status: 'error', msg: upErr.message });
+        videoUrl = sb.storage.from('videos').getPublicUrl(path).data.publicUrl;
+        if (frames[0]) { try { const pp = `${state.me.id}/poster-${stamp}.jpg`; await sb.storage.from('videos').upload(pp, dataUrlToBlob(frames[0]), { contentType: 'image/jpeg', upsert: true }); posterUrl = sb.storage.from('videos').getPublicUrl(pp).data.publicUrl; } catch (_) {} }
+      }
+    }
+    setUpload({ status: 'processing' });
+    const { data: post, error: pErr } = await sb.from('posts')
+      .insert({ creator_id: state.me.id, handle: state.me.handle, vertical: job.vertical, caption: job.caption, video_url: videoUrl, poster_url: posterUrl })
+      .select().single();
+    if (pErr) return setUpload({ status: 'error', msg: pErr.message });
+    const { error: prErr } = await sb.from('products').insert(job.products.map(p => ({ ...p, post_id: post.id })));
+    if (prErr) return setUpload({ status: 'error', msg: 'Saved video, but products failed' });
+
+    clearDraft();
+    setUpload({ status: 'done' });
+    await refreshPosts();
+    if (activeTab === 'feed') { state.feedFocusId = post.id; render(); }
+    setTimeout(() => { state.upload = null; showUploadBanner(); }, 2500);
+  } catch (e) {
+    setUpload({ status: 'error', msg: e.message });
+  }
+}
+
 function wireCreate() {
   let vertical = loadDraft().vertical || 'beauty';
   const list = app.querySelector('#cr-products');
@@ -1302,7 +1378,7 @@ function wireCreate() {
     snapshot();
   };
 
-  app.querySelector('#cr-publish').onclick = async () => {
+  app.querySelector('#cr-publish').onclick = () => {
     const msg = app.querySelector('#cr-msg');
     const setErr = (t) => { msg.className='text-center text-sm h-4 text-red-400'; msg.textContent=t; };
     const url = app.querySelector('#cr-url').value.trim();
@@ -1318,68 +1394,12 @@ function wireCreate() {
     })).filter(p => p.title && p.link);
     if (!products.length) return setErr('Add at least one product with a name + affiliate link.');
 
-    const setOk = (t) => { msg.className='text-center text-sm h-4 text-white/60'; msg.textContent=t; };
-
-    // 1) Inline AI safety check — runs now so there's no "pending" wait after publishing.
-    let frames = [];
-    if (createFileObj) {
-      setOk('🔍 Checking your video…');
-      const t0 = Date.now();
-      frames = await extractFrames(createFileObj);
-      const verdict = await moderate(frames);
-      const elapsed = Date.now() - t0;
-      if (elapsed < 900) await new Promise(r => setTimeout(r, 900 - elapsed)); // keep the step visible
-      if (!verdict.allow) return setErr(verdict.reason || 'This video violates our content policy.');
-    }
-    setOk('Uploading…');
-
-    let videoUrl = url, posterUrl = null;
-    if (createFileObj) {
-      const stamp = Date.now();
-      if (CFG.CF_CUSTOMER_CODE) {
-        // ---- Cloudflare Stream: fast adaptive streaming + global CDN ----
-        const up = await fetch('/api/stream-upload-url', { method: 'POST' }).then(r => r.json()).catch(() => ({}));
-        if (up.enabled && up.uploadURL) {
-          try {
-            await uploadWithProgress(up.uploadURL, createFileObj, (pct) => setOk(`Uploading… ${pct}%`));
-          } catch (e) { return setErr('Video upload failed: ' + e.message); }
-          setOk('Processing…');
-          const base = `https://customer-${CFG.CF_CUSTOMER_CODE}.cloudflarestream.com/${up.uid}`;
-          videoUrl = `${base}/manifest/video.m3u8`;
-          posterUrl = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`;
-        } else {
-          return setErr('Stream upload unavailable — check Cloudflare setup.');
-        }
-      } else {
-        // ---- Supabase Storage (fallback) ----
-        const ext = (createFileObj.name.split('.').pop() || 'mp4').toLowerCase();
-        const path = `${state.me.id}/${stamp}.${ext}`;
-        const { error: upErr } = await sb.storage.from('videos').upload(path, createFileObj, { contentType: createFileObj.type });
-        if (upErr) return setErr('Video upload failed: ' + upErr.message);
-        videoUrl = sb.storage.from('videos').getPublicUrl(path).data.publicUrl;
-        if (frames[0]) {
-          try {
-            const posterPath = `${state.me.id}/poster-${stamp}.jpg`;
-            await sb.storage.from('videos').upload(posterPath, dataUrlToBlob(frames[0]), { contentType: 'image/jpeg', upsert: true });
-            posterUrl = sb.storage.from('videos').getPublicUrl(posterPath).data.publicUrl;
-          } catch (_) { /* poster is optional */ }
-        }
-      }
+    if (state.upload && state.upload.status !== 'done' && state.upload.status !== 'error') {
+      return setErr('A video is still uploading — please wait for it to finish.');
     }
 
-    const { data: post, error: pErr } = await sb.from('posts')
-      .insert({ creator_id: state.me.id, handle: state.me.handle, vertical, caption, video_url: videoUrl, poster_url: posterUrl })
-      .select().single();
-    if (pErr) return setErr('Could not save post: ' + pErr.message);
-
-    const { error: prErr } = await sb.from('products').insert(products.map(p => ({ ...p, post_id: post.id })));
-    if (prErr) return setErr('Saved video, but products failed: ' + prErr.message);
-
-    clearDraft();
-    msg.className='text-center text-sm h-4 text-green-400'; msg.textContent='✅ Published!';
-    await refreshPosts();
-    state.feedFocusId = post.id;   // jump the feed to the video we just posted
-    setTimeout(() => { activeTab = 'feed'; render(); }, 500);
+    // hand off to the background uploader and let the user browse the feed meanwhile
+    startBackgroundUpload({ fileObj: createFileObj, url, caption, vertical, products });
   };
 }
 
