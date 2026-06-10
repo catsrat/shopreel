@@ -614,7 +614,6 @@ function ProfileScreen() {
       <div><p class="text-xl font-bold">@${esc(u.handle)}</p>
       <div class="flex gap-1.5 mt-1">
         ${v?`<span class="text-xs bg-white/10 px-2 py-0.5 rounded-full">${v.emoji} ${v.label}</span>`:''}
-        ${plan?`<span class="text-xs bg-brand-600 px-2 py-0.5 rounded-full">${plan.name} · €${plan.price}/mo</span>`:`<span class="text-xs bg-white/10 px-2 py-0.5 rounded-full text-white/60">No plan</span>`}
       </div></div>
     </div>
     <div class="px-5 mt-7">
@@ -1279,7 +1278,16 @@ async function runUpload(job) {
         } catch (e) { return setUpload({ status: 'error', msg: e.message }); }
         const base = `https://customer-${CFG.CF_CUSTOMER_CODE}.cloudflarestream.com/${up.uid}`;
         videoUrl = `${base}/manifest/video.m3u8`;
-        posterUrl = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`;
+        // instant poster from the local frame (Cloudflare's own thumbnail isn't ready until processing finishes)
+        if (frames[0]) {
+          try {
+            const pp = `${state.me.id}/poster-${stamp}.jpg`;
+            await sb.storage.from('videos').upload(pp, dataUrlToBlob(frames[0]), { contentType: 'image/jpeg', upsert: true });
+            posterUrl = sb.storage.from('videos').getPublicUrl(pp).data.publicUrl;
+          } catch (_) { posterUrl = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`; }
+        } else {
+          posterUrl = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`;
+        }
       } else {
         const ext = (job.fileObj.name.split('.').pop() || 'mp4').toLowerCase();
         const path = `${state.me.id}/${stamp}.${ext}`;
