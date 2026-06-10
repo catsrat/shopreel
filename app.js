@@ -881,7 +881,7 @@ function wireFeed() {
     }
     if (b.dataset.link) {
       const p = state.posts.find(x => x.id === postId);
-      const subid = `c:${p?.creator_id || 'x'}|p:${postId}`;   // identifies which creator/video drove the click
+      const subid = p?.creator_id || 'unknown';   // creator tag (cuid) so Sovrn attributes the sale to the right creator
       window.open(wrapAffiliate(b.dataset.link, subid), '_blank', 'noopener');
     }
   });

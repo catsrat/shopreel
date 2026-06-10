@@ -10,5 +10,5 @@ window.SHOPREEL_CONFIG = {
   // Paste your aggregator's redirect template using {URL} and {SUBID} placeholders.
   //   Skimlinks example: "https://go.skimresources.com/?id=YOURID&xs=1&url={URL}&xcust={SUBID}"
   // Leave empty to disable (Shop links just open normally, no commission tracking yet).
-  AFFILIATE_TEMPLATE: ""
+  AFFILIATE_TEMPLATE: "https://redirect.viglink.com/?format=go&key=652073351dbf60cf1dc9dd04ecab8ee7&u={URL}&cuid={SUBID}"
 };
