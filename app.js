@@ -93,7 +93,7 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null, upload: null, myFollowing: new Set(), followCounts: {} };
 const isOwner = () => !!(state.me && CFG.OWNER_EMAIL && state.me.email === CFG.OWNER_EMAIL);
 async function openPayouts() {
   activeTab = 'payouts'; state.payoutList = null; render();
@@ -155,6 +155,36 @@ async function loadPayout() {
   if (!state.me) { state.payout = null; return; }
   const { data } = await sb.from('payout_accounts').select('*').eq('user_id', state.me.id).maybeSingle();
   state.payout = data || { paypal_email: '', upi: '', country: '' };
+}
+async function loadMyFollows() {
+  if (!state.me) { state.myFollowing = new Set(); return; }
+  const { data } = await sb.from('follows').select('following_id').eq('follower_id', state.me.id);
+  state.myFollowing = new Set((data || []).map(x => x.following_id));
+}
+async function ensureFollowCounts(userId) {
+  if (!userId || state.followCounts[userId]) return;
+  state.followCounts[userId] = { followers: 0, following: 0 };
+  const [a, b] = await Promise.all([
+    sb.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
+    sb.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId)
+  ]);
+  state.followCounts[userId] = { followers: a.count || 0, following: b.count || 0 };
+  if (activeTab === 'profile' || activeTab === 'creator') render();
+}
+async function toggleFollow(id) {
+  if (!state.me || id === state.me.id) return;
+  const wasFollowing = state.myFollowing.has(id);
+  const fc = state.followCounts[id] || (state.followCounts[id] = { followers: 0, following: 0 });
+  if (wasFollowing) { state.myFollowing.delete(id); fc.followers = Math.max(0, fc.followers - 1); }
+  else { state.myFollowing.add(id); fc.followers++; }
+  const now = state.myFollowing.has(id);
+  app.querySelectorAll(`.cre-follow[data-id="${id}"]`).forEach(b => {
+    b.textContent = now ? 'Following' : 'Follow';
+    b.className = `cre-follow shrink-0 px-5 py-2 rounded-full font-bold text-sm ${now ? 'bg-white/10 border border-white/20' : 'bg-brand-600'}`;
+  });
+  app.querySelectorAll(`.cre-followers[data-id="${id}"]`).forEach(el => el.textContent = fc.followers);
+  if (wasFollowing) await sb.from('follows').delete().eq('follower_id', state.me.id).eq('following_id', id);
+  else await sb.from('follows').insert({ follower_id: state.me.id, following_id: id });
 }
 
 async function loadMySocial() {
@@ -219,7 +249,7 @@ async function applySession(session) {
     if (!state.me || state.me.id !== session.user.id) {
       state.me = await ensureProfile(session.user);
     }
-    if (state.me) { await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
+    if (state.me) { await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout(), loadMyFollows()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
     // Signed in, but the profile row couldn't be created — show why.
     state.booted = true;
     app.innerHTML = InfoScreen('Signed in, but profile setup failed', _authError || 'Unknown database error', session.user.email);
@@ -280,7 +310,7 @@ function bindCountSync() {
 }
 async function syncCounts() {
   if (!state.me) return;
-  await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout()]);
+  await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout(), loadMyFollows()]);
   if (activeTab === 'feed') {
     // update badges in place so the playing video isn't interrupted
     state.posts.forEach(p => {
@@ -612,6 +642,7 @@ function ProfileScreen() {
     <div class="px-5 mt-5 flex items-center gap-4">
       ${avatarHTML(u.avatar_url, u.handle, 'w-16 h-16', 'text-2xl font-black')}
       <div><p class="text-xl font-bold">@${esc(u.handle)}</p>
+      <p class="text-white/50 text-sm mt-0.5"><b class="text-white">${(state.followCounts[u.id]||{}).followers||0}</b> followers · <b class="text-white">${(state.followCounts[u.id]||{}).following||0}</b> following</p>
       <div class="flex gap-1.5 mt-1">
         ${v?`<span class="text-xs bg-white/10 px-2 py-0.5 rounded-full">${v.emoji} ${v.label}</span>`:''}
       </div></div>
@@ -717,6 +748,8 @@ function CreatorScreen() {
   const v = VERTICALS.find(x => x.id === u.vertical);
   const vids = state.posts.filter(p => p.creator_id === u.id).sort((a,b)=> b.created_at>a.created_at?1:-1);
   const links = u.links || [];
+  const fc = state.followCounts[u.id] || { followers: 0, following: 0 };
+  const following = state.myFollowing.has(u.id);
   return `
   <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-28">
     <div class="px-5 pt-12 flex items-center gap-3">
@@ -725,10 +758,11 @@ function CreatorScreen() {
     </div>
     <div class="px-5 mt-5 flex items-center gap-4">
       ${avatarHTML(u.avatar_url, u.handle, 'w-16 h-16', 'text-2xl font-black')}
-      <div>
+      <div class="flex-1 min-w-0">
         ${v?`<span class="text-xs bg-white/10 px-2 py-0.5 rounded-full">${v.emoji} ${v.label}</span>`:''}
-        <p class="text-white/50 text-sm mt-1">${vids.length} video${vids.length===1?'':'s'}</p>
+        <p class="text-white/50 text-sm mt-1"><b class="cre-followers text-white" data-id="${u.id}">${fc.followers}</b> followers · <b class="text-white">${vids.length}</b> video${vids.length===1?'':'s'}</p>
       </div>
+      ${state.me && state.me.id===u.id ? '' : `<button class="cre-follow shrink-0 px-5 py-2 rounded-full font-bold text-sm ${following?'bg-white/10 border border-white/20':'bg-brand-600'}" data-id="${u.id}">${following?'Following':'Follow'}</button>`}
     </div>
     ${links.length ? `<div class="px-5 mt-4 flex flex-wrap gap-2">${links.map(l=>`<a href="${esc(l.url)}" target="_blank" rel="noopener" class="bg-white/10 border border-white/15 rounded-full px-3 py-1 text-sm">🔗 ${esc(l.label)}</a>`).join('')}</div>`:''}
     <div class="px-5 mt-5">
@@ -746,6 +780,8 @@ function wireCreator() {
   const back = app.querySelector('.cre-back');
   if (back) back.onclick = () => { activeTab = 'feed'; render(); };
   app.querySelectorAll('.cre-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post));
+  if (state.viewProfile) ensureFollowCounts(state.viewProfile.id);
+  app.querySelectorAll('.cre-follow').forEach(b => b.onclick = (e) => { e.stopPropagation(); toggleFollow(b.dataset.id); });
 }
 
 /* ---------- payouts (owner admin) ---------- */
@@ -1434,6 +1470,7 @@ function wireSubscribe() {
 function wireProfile() {
   const gear = app.querySelector('.pf-settings');
   if (gear) gear.onclick = () => { activeTab = 'settings'; render(); };
+  if (state.me) ensureFollowCounts(state.me.id);
   app.querySelectorAll('.pf-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post));
   app.querySelectorAll('.pf-del-vid').forEach(b => b.onclick = async (e) => {
     e.stopPropagation();
