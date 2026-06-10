@@ -93,7 +93,18 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null, payoutList: null };
+const isOwner = () => !!(state.me && CFG.OWNER_EMAIL && state.me.email === CFG.OWNER_EMAIL);
+async function openPayouts() {
+  activeTab = 'payouts'; state.payoutList = null; render();
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch('/api/payout', { headers: { Authorization: `Bearer ${session.access_token}` } });
+    const d = await r.json();
+    state.payoutList = d.creators || [];
+  } catch { state.payoutList = []; }
+  render();
+}
 function openPostInFeed(postId) { state.feedFocusId = postId; activeTab = 'feed'; render(); }
 const likeCountOf = (p) => p.likes?.[0]?.count || 0;
 const commentCountOf = (p) => p.comments?.[0]?.count || 0;
@@ -334,6 +345,7 @@ function render() {
   else if (activeTab === 'profile') body = ProfileScreen();
   else if (activeTab === 'settings') body = SettingsScreen();
   else if (activeTab === 'creator') body = CreatorScreen();
+  else if (activeTab === 'payouts') body = PayoutsScreen();
   app.innerHTML = body + (activeTab === 'settings' ? '' : NavBar());
   wireCommon();
   if (activeTab === 'feed') wireFeed();
@@ -342,6 +354,7 @@ function render() {
   if (activeTab === 'profile') wireProfile();
   if (activeTab === 'settings') wireSettings();
   if (activeTab === 'creator') wireCreator();
+  if (activeTab === 'payouts') wirePayouts();
 }
 
 function Splash(msg) {
@@ -644,7 +657,8 @@ function ProfileScreen() {
         </button>`).join('')}</div>`
         : `<p class="text-white/40 text-sm">Videos you save will appear here.</p>`}
     </div>
-    <div class="px-5 mt-7"><button id="pf-logout" class="w-full border border-white/20 py-3 rounded-xl font-semibold">Log out</button></div>
+    ${isOwner() ? `<div class="px-5 mt-4"><button class="pf-payouts-admin w-full bg-gradient-to-r from-brand-600 to-purple-700 py-3 rounded-xl font-bold">💸 Payouts (admin)</button></div>` : ''}
+    <div class="px-5 mt-4"><button id="pf-logout" class="w-full border border-white/20 py-3 rounded-xl font-semibold">Log out</button></div>
   </div>`;
 }
 
@@ -733,6 +747,70 @@ function wireCreator() {
   const back = app.querySelector('.cre-back');
   if (back) back.onclick = () => { activeTab = 'feed'; render(); };
   app.querySelectorAll('.cre-vid').forEach(b => b.onclick = () => openPostInFeed(b.dataset.post));
+}
+
+/* ---------- payouts (owner admin) ---------- */
+function PayoutsScreen() {
+  const list = state.payoutList;
+  let inner;
+  if (list === null) {
+    inner = `<p class="px-5 mt-8 text-white/50">Loading…</p>`;
+  } else {
+    const totalPayable = list.reduce((s, c) => s + c.payable, 0);
+    inner = `
+      <div class="px-5 mt-5">
+        <div class="rounded-2xl bg-white/5 border border-white/10 p-4 flex items-center justify-between gap-3">
+          <div><p class="text-white/60 text-xs">Total owed to creators</p><p class="text-2xl font-black">€${totalPayable.toFixed(2)}</p></div>
+          <button id="pay-all" class="bg-brand-600 font-bold px-4 py-2.5 rounded-xl ${totalPayable<=0?'opacity-40 pointer-events-none':''}">Pay everyone</button>
+        </div>
+        <p id="pay-msg" class="text-center text-sm h-4 mt-2"></p>
+      </div>
+      <div class="px-5 mt-2 space-y-2">
+        ${list.length ? list.map(c => `
+          <div class="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center justify-between gap-3">
+            <div class="min-w-0"><p class="font-bold truncate">@${esc(c.handle)}</p>
+              <p class="text-white/40 text-xs truncate">${c.paypal ? esc(c.paypal) : '⚠️ no PayPal set'}</p></div>
+            <div class="text-right shrink-0"><p class="font-black">€${c.payable.toFixed(2)}</p>
+              <button class="pay-one text-xs font-bold text-brand-500 ${(c.payable<=0||!c.paypal)?'opacity-40 pointer-events-none':''}" data-id="${c.creator_id}">Pay</button></div>
+          </div>`).join('') : `<p class="text-white/40 text-center mt-6">No creators with earnings yet.</p>`}
+      </div>
+      <p class="px-8 text-white/30 text-[11px] text-center mt-5">Payments send via PayPal. ${'' /* sandbox note */}Test in PayPal sandbox before going live.</p>`;
+  }
+  return `
+  <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-28">
+    <div class="px-5 pt-12 flex items-center gap-3">
+      <button class="pay-back w-10 h-10 grid place-items-center rounded-full bg-white/10 border border-white/15 text-lg">←</button>
+      <h1 class="text-2xl font-black">Payouts</h1>
+    </div>
+    ${inner}
+  </div>`;
+}
+function wirePayouts() {
+  const back = app.querySelector('.pay-back');
+  if (back) back.onclick = () => { activeTab = 'profile'; render(); };
+  const msg = app.querySelector('#pay-msg');
+  const tokenOf = async () => (await sb.auth.getSession()).data.session?.access_token;
+  async function doPay(bodyObj, btn) {
+    if (btn) { btn.textContent = '…'; btn.style.pointerEvents = 'none'; }
+    if (msg) { msg.className = 'text-center text-sm h-4 mt-2 text-white/60'; msg.textContent = 'Sending…'; }
+    try {
+      const r = await fetch('/api/payout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await tokenOf()}` },
+        body: JSON.stringify(bodyObj)
+      });
+      const d = await r.json();
+      if (msg) {
+        const okMsg = d.ok && (d.paid != null || d.results);
+        const failReason = d.reason || d.error || (d.results ? '' : 'Failed');
+        msg.className = 'text-center text-sm h-4 mt-2 ' + (okMsg && !failReason ? 'text-green-400' : 'text-amber-400');
+        msg.textContent = okMsg ? '✅ Done' : (failReason || 'Done with issues');
+      }
+    } catch (e) { if (msg) { msg.className = 'text-center text-sm h-4 mt-2 text-red-400'; msg.textContent = e.message; } }
+    setTimeout(openPayouts, 800);   // refresh balances
+  }
+  const payAll = app.querySelector('#pay-all');
+  if (payAll) payAll.onclick = () => doPay({ all: true }, payAll);
+  app.querySelectorAll('.pay-one').forEach(b => b.onclick = () => doPay({ creator_id: b.dataset.id }, b));
 }
 
 /* ---------- nav ---------- */
@@ -825,6 +903,8 @@ function wireCommon() {
   if (lo) lo.onclick = async () => { await sb.auth.signOut(); state.me = null; activeTab='feed'; render(); };
   const payoutCta = app.querySelector('.pf-payout-cta');
   if (payoutCta) payoutCta.onclick = () => { activeTab = 'settings'; render(); };
+  const payAdmin = app.querySelector('.pf-payouts-admin');
+  if (payAdmin) payAdmin.onclick = () => openPayouts();
 }
 
 function wireFeed() {
