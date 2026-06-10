@@ -93,7 +93,7 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null, payout: null };
 function openPostInFeed(postId) { state.feedFocusId = postId; activeTab = 'feed'; render(); }
 const likeCountOf = (p) => p.likes?.[0]?.count || 0;
 const commentCountOf = (p) => p.comments?.[0]?.count || 0;
@@ -138,7 +138,12 @@ async function refreshPosts() { state.posts = await loadPosts(); }
 async function loadEarnings() {
   if (!state.me) { state.earnings = null; return; }
   const { data } = await sb.from('creator_earnings').select('*').eq('creator_id', state.me.id).maybeSingle();
-  state.earnings = data || { pending: 0, confirmed: 0, sales: 0, clicks: 0, currency: 'EUR' };
+  state.earnings = data || { pending: 0, confirmed: 0, sales: 0, clicks: 0, paid_out: 0, currency: 'EUR' };
+}
+async function loadPayout() {
+  if (!state.me) { state.payout = null; return; }
+  const { data } = await sb.from('payout_accounts').select('*').eq('user_id', state.me.id).maybeSingle();
+  state.payout = data || { paypal_email: '', upi: '', country: '' };
 }
 
 async function loadMySocial() {
@@ -203,7 +208,7 @@ async function applySession(session) {
     if (!state.me || state.me.id !== session.user.id) {
       state.me = await ensureProfile(session.user);
     }
-    if (state.me) { await Promise.all([refreshPosts(), loadMySocial(), loadEarnings()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
+    if (state.me) { await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
     // Signed in, but the profile row couldn't be created — show why.
     state.booted = true;
     app.innerHTML = InfoScreen('Signed in, but profile setup failed', _authError || 'Unknown database error', session.user.email);
@@ -264,7 +269,7 @@ function bindCountSync() {
 }
 async function syncCounts() {
   if (!state.me) return;
-  await Promise.all([refreshPosts(), loadMySocial(), loadEarnings()]);
+  await Promise.all([refreshPosts(), loadMySocial(), loadEarnings(), loadPayout()]);
   if (activeTab === 'feed') {
     // update badges in place so the playing video isn't interrupted
     state.posts.forEach(p => {
@@ -532,20 +537,24 @@ function DashboardScreen() {
   const mine = state.posts.filter(p => p.creator_id === state.me.id).sort((a,b)=>scoreOf(b)-scoreOf(a));
   const totalClicks = mine.reduce((s,p)=>s+tapsOf(p),0);
   const totalViews = mine.reduce((s,p)=>s+(p.views||0),0);
-  const e = state.earnings || { pending: 0, confirmed: 0, sales: 0, currency: 'EUR' };
-  const total = (Number(e.pending) || 0) + (Number(e.confirmed) || 0);
+  const e = state.earnings || { pending: 0, confirmed: 0, sales: 0, paid_out: 0, currency: 'EUR' };
+  const confirmed = Number(e.confirmed)||0, pending = Number(e.pending)||0, paid = Number(e.paid_out)||0;
+  const payable = Math.max(0, confirmed - paid);
+  const hasPayout = state.payout && (state.payout.paypal_email || state.payout.upi);
   return `
   <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-28">
     <div class="px-5 pt-12 pb-4"><h1 class="text-2xl font-black">Your dashboard</h1></div>
     <div class="px-5 mb-5">
       <div class="rounded-2xl bg-gradient-to-br from-brand-600 to-purple-700 p-5 shadow-lg shadow-brand-600/20">
-        <p class="text-white/80 text-sm font-semibold">💰 Your earnings</p>
-        <p class="text-4xl font-black mt-1">€${total.toFixed(2)}</p>
-        <div class="flex gap-4 mt-2 text-xs text-white/85">
-          <span>⏳ Pending €${(Number(e.pending)||0).toFixed(2)}</span>
-          <span>✅ Confirmed €${(Number(e.confirmed)||0).toFixed(2)}</span>
+        <p class="text-white/80 text-sm font-semibold">💰 Available to withdraw</p>
+        <p class="text-4xl font-black mt-1">€${payable.toFixed(2)}</p>
+        <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-white/85">
+          <span>⏳ Pending €${pending.toFixed(2)}</span>
+          <span>✅ Confirmed €${confirmed.toFixed(2)}</span>
+          <span>💸 Paid out €${paid.toFixed(2)}</span>
         </div>
-        <p class="text-white/65 text-[11px] mt-2">From ${e.sales||0} sale${(e.sales||0)===1?'':'s'} · commissions confirm after retailer return windows · updates a few times a day</p>
+        <p class="text-white/65 text-[11px] mt-2">From ${e.sales||0} sale${(e.sales||0)===1?'':'s'} · pending clears after retailer return windows.</p>
+        ${hasPayout ? '' : `<button class="pf-payout-cta mt-3 bg-white text-brand-700 text-sm font-bold px-3 py-1.5 rounded-lg">＋ Add payout details</button>`}
       </div>
     </div>
     <div class="px-5 grid grid-cols-3 gap-3 mb-6">
@@ -642,8 +651,9 @@ function ProfileScreen() {
 /* ---------- settings ---------- */
 function SettingsScreen() {
   const u = state.me;
+  const p = state.payout || {};
   return `
-  <div class="h-full overflow-y-auto no-scrollbar bg-ink-900">
+  <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-12">
     <div class="px-5 pt-12 flex items-center gap-3">
       <button class="set-back w-10 h-10 grid place-items-center rounded-full bg-white/10 border border-white/15 text-lg">←</button>
       <h1 class="text-2xl font-black">Settings</h1></div>
@@ -665,6 +675,14 @@ function SettingsScreen() {
         <div id="set-verticals" class="flex gap-2 flex-wrap mt-2">
           ${VERTICALS.map(v=>`<button data-v="${v.id}" class="set-v px-3 py-2 rounded-full border text-sm ${u.vertical===v.id?'bg-brand-600 text-white border-brand-600':'border-white/20'}">${v.emoji} ${v.label}</button>`).join('')}
         </div></div>
+
+      <div class="pt-2 border-t border-white/10">
+        <label class="text-sm font-semibold">💸 Payout details <span class="text-white/40 font-normal">— how you get paid</span></label>
+        <input id="set-paypal" value="${esc(p.paypal_email||'')}" type="email" placeholder="PayPal email" class="w-full mt-2 px-4 py-3 rounded-xl bg-white/5 border border-white/15 outline-none focus:border-brand-500" />
+        <input id="set-upi" value="${esc(p.upi||'')}" placeholder="UPI ID (India — optional)" class="w-full mt-2 px-4 py-3 rounded-xl bg-white/5 border border-white/15 outline-none focus:border-brand-500" />
+        <p class="text-white/30 text-xs mt-1">Add your PayPal so we can send your earnings once they're confirmed.</p>
+      </div>
+
       <button id="set-save" class="w-full bg-brand-600 font-bold py-3.5 rounded-xl">Save changes</button>
       <p id="set-msg" class="text-center text-sm h-4"></p>
     </div>
@@ -805,6 +823,8 @@ function wireCommon() {
   });
   const lo = app.querySelector('#pf-logout');
   if (lo) lo.onclick = async () => { await sb.auth.signOut(); state.me = null; activeTab='feed'; render(); };
+  const payoutCta = app.querySelector('.pf-payout-cta');
+  if (payoutCta) payoutCta.onclick = () => { activeTab = 'settings'; render(); };
 }
 
 function wireFeed() {
@@ -1307,7 +1327,14 @@ function wireSettings() {
     const { error } = await sb.from('profiles').update({ handle, vertical }).eq('id', state.me.id);
     if (error) { msg.className='text-center text-sm h-4 text-red-400'; msg.textContent=error.message; return; }
     if (handle !== oldHandle) await sb.from('posts').update({ handle }).eq('creator_id', state.me.id);
-    await reloadMe(); await refreshPosts();
+    // save payout details
+    await sb.from('payout_accounts').upsert({
+      user_id: state.me.id,
+      paypal_email: app.querySelector('#set-paypal').value.trim(),
+      upi: app.querySelector('#set-upi').value.trim(),
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+    await Promise.all([reloadMe(), refreshPosts(), loadPayout()]);
     msg.className='text-center text-sm h-4 text-green-400'; msg.textContent='✅ Saved!';
     setTimeout(() => { activeTab = 'profile'; render(); }, 500);
   };

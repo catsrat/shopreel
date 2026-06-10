@@ -76,7 +76,17 @@ create table if not exists creator_earnings (
   sales int default 0,
   pending numeric default 0,
   confirmed numeric default 0,
+  paid_out numeric default 0,
   currency text default 'EUR',
+  updated_at timestamptz default now()
+);
+alter table creator_earnings add column if not exists paid_out numeric default 0;
+
+create table if not exists payout_accounts (
+  user_id uuid primary key references profiles(id) on delete cascade,
+  paypal_email text,
+  upi text,
+  country text,
   updated_at timestamptz default now()
 );
 
@@ -90,6 +100,9 @@ alter table comments enable row level security;
 alter table creator_earnings enable row level security;
 drop policy if exists "earnings read own" on creator_earnings;
 create policy "earnings read own" on creator_earnings for select using (auth.uid() = creator_id);
+alter table payout_accounts enable row level security;
+drop policy if exists "payout self" on payout_accounts;
+create policy "payout self" on payout_accounts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 drop policy if exists "profiles read"       on profiles;
 drop policy if exists "profiles insert own" on profiles;
