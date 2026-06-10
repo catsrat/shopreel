@@ -541,7 +541,10 @@ function openStoryViewer(startUid) {
         <div class="flex items-center gap-2 mt-2">
           ${avatarHTML(group.avatar_url, group.handle, 'w-8 h-8')}
           <span class="font-bold text-sm">@${esc(group.handle)}</span>
-          <button class="sv-close ml-auto text-2xl text-white/90 leading-none px-2">✕</button>
+          <div class="ml-auto flex items-center gap-4">
+            ${group.user_id === state.me?.id ? '<button class="sv-delete text-lg leading-none">🗑️</button>' : ''}
+            <button class="sv-close text-2xl text-white/90 leading-none">✕</button>
+          </div>
         </div>
       </div>
       <button class="sv-prev absolute left-0 top-20 bottom-0 w-1/3"></button>
@@ -549,6 +552,16 @@ function openStoryViewer(startUid) {
     wrap.querySelector('.sv-close').onclick = close;
     wrap.querySelector('.sv-prev').onclick = () => { ii--; show(); };
     wrap.querySelector('.sv-next').onclick = () => { ii++; show(); };
+    const del = wrap.querySelector('.sv-delete');
+    if (del) del.onclick = async () => {
+      if (!confirm('Delete this story?')) return;
+      if (timer) clearTimeout(timer);
+      await sb.from('stories').delete().eq('id', item.id);
+      group.items.splice(ii, 1);
+      if (group.items.length === 0) { state.stories.splice(gi, 1); ii = 0; }
+      if (activeTab === 'feed') render();   // refresh the story ring
+      show();
+    };
     const vid = wrap.querySelector('.sv-media');
     if (vid && vid.hasAttribute('data-hls')) {
       const url = vid.getAttribute('data-hls');
