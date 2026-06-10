@@ -16,5 +16,5 @@ window.SHOPREEL_CONFIG = {
   OWNER_EMAIL: "monetizationfast@gmail.com",
 
   // Cloudflare Stream customer code (from your Stream dashboard playback URLs). Empty = use Supabase.
-  CF_CUSTOMER_CODE: ""
+  CF_CUSTOMER_CODE: "y6fl6i2azdg6qbge"
 };
