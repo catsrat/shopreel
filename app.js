@@ -93,7 +93,7 @@ function scoreBar(p) {
 }
 
 /* ---------- state ---------- */
-const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null };
+const state = { me: null, posts: [], booted: false, viewProfile: null, myLikes: new Set(), mySaves: new Set(), feedFocusId: null, earnings: null };
 function openPostInFeed(postId) { state.feedFocusId = postId; activeTab = 'feed'; render(); }
 const likeCountOf = (p) => p.likes?.[0]?.count || 0;
 const commentCountOf = (p) => p.comments?.[0]?.count || 0;
@@ -134,6 +134,12 @@ async function loadPosts() {
   return [];
 }
 async function refreshPosts() { state.posts = await loadPosts(); }
+
+async function loadEarnings() {
+  if (!state.me) { state.earnings = null; return; }
+  const { data } = await sb.from('creator_earnings').select('*').eq('creator_id', state.me.id).maybeSingle();
+  state.earnings = data || { pending: 0, confirmed: 0, sales: 0, clicks: 0, currency: 'EUR' };
+}
 
 async function loadMySocial() {
   if (!state.me) { state.myLikes = new Set(); state.mySaves = new Set(); return; }
@@ -197,7 +203,7 @@ async function applySession(session) {
     if (!state.me || state.me.id !== session.user.id) {
       state.me = await ensureProfile(session.user);
     }
-    if (state.me) { await Promise.all([refreshPosts(), loadMySocial()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
+    if (state.me) { await Promise.all([refreshPosts(), loadMySocial(), loadEarnings()]); state.booted = true; render(); startRealtime(); bindCountSync(); return; }
     // Signed in, but the profile row couldn't be created — show why.
     state.booted = true;
     app.innerHTML = InfoScreen('Signed in, but profile setup failed', _authError || 'Unknown database error', session.user.email);
@@ -258,7 +264,7 @@ function bindCountSync() {
 }
 async function syncCounts() {
   if (!state.me) return;
-  await Promise.all([refreshPosts(), loadMySocial()]);
+  await Promise.all([refreshPosts(), loadMySocial(), loadEarnings()]);
   if (activeTab === 'feed') {
     // update badges in place so the playing video isn't interrupted
     state.posts.forEach(p => {
@@ -526,9 +532,22 @@ function DashboardScreen() {
   const mine = state.posts.filter(p => p.creator_id === state.me.id).sort((a,b)=>scoreOf(b)-scoreOf(a));
   const totalClicks = mine.reduce((s,p)=>s+tapsOf(p),0);
   const totalViews = mine.reduce((s,p)=>s+(p.views||0),0);
+  const e = state.earnings || { pending: 0, confirmed: 0, sales: 0, currency: 'EUR' };
+  const total = (Number(e.pending) || 0) + (Number(e.confirmed) || 0);
   return `
   <div class="h-full overflow-y-auto no-scrollbar bg-ink-900 pb-28">
     <div class="px-5 pt-12 pb-4"><h1 class="text-2xl font-black">Your dashboard</h1></div>
+    <div class="px-5 mb-5">
+      <div class="rounded-2xl bg-gradient-to-br from-brand-600 to-purple-700 p-5 shadow-lg shadow-brand-600/20">
+        <p class="text-white/80 text-sm font-semibold">💰 Your earnings</p>
+        <p class="text-4xl font-black mt-1">€${total.toFixed(2)}</p>
+        <div class="flex gap-4 mt-2 text-xs text-white/85">
+          <span>⏳ Pending €${(Number(e.pending)||0).toFixed(2)}</span>
+          <span>✅ Confirmed €${(Number(e.confirmed)||0).toFixed(2)}</span>
+        </div>
+        <p class="text-white/65 text-[11px] mt-2">From ${e.sales||0} sale${(e.sales||0)===1?'':'s'} · commissions confirm after retailer return windows · updates a few times a day</p>
+      </div>
+    </div>
     <div class="px-5 grid grid-cols-3 gap-3 mb-6">
       <div class="bg-white/5 border border-white/10 rounded-2xl p-4"><p class="text-2xl font-black">${mine.length}</p><p class="text-white/50 text-xs">Videos</p></div>
       <div class="bg-white/5 border border-white/10 rounded-2xl p-4"><p class="text-2xl font-black">${totalViews}</p><p class="text-white/50 text-xs">Views</p></div>

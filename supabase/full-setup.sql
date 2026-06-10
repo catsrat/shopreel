@@ -70,6 +70,16 @@ create table if not exists comments (
   created_at timestamptz default now()
 );
 
+create table if not exists creator_earnings (
+  creator_id uuid primary key references profiles(id) on delete cascade,
+  clicks int default 0,
+  sales int default 0,
+  pending numeric default 0,
+  confirmed numeric default 0,
+  currency text default 'EUR',
+  updated_at timestamptz default now()
+);
+
 -- ========== ROW LEVEL SECURITY ==========
 alter table profiles enable row level security;
 alter table posts    enable row level security;
@@ -77,6 +87,9 @@ alter table products enable row level security;
 alter table likes    enable row level security;
 alter table saves    enable row level security;
 alter table comments enable row level security;
+alter table creator_earnings enable row level security;
+drop policy if exists "earnings read own" on creator_earnings;
+create policy "earnings read own" on creator_earnings for select using (auth.uid() = creator_id);
 
 drop policy if exists "profiles read"       on profiles;
 drop policy if exists "profiles insert own" on profiles;
