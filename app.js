@@ -201,7 +201,35 @@ async function toggleFollow(id) {
   app.querySelectorAll(`.cre-followers[data-id="${id}"]`).forEach(el => el.textContent = fc.followers);
   if (now) app.querySelectorAll(`.sr-follow[data-id="${id}"]`).forEach(b => b.remove());   // hide feed follow button once followed
   if (wasFollowing) await sb.from('follows').delete().eq('follower_id', state.me.id).eq('following_id', id);
-  else await sb.from('follows').insert({ follower_id: state.me.id, following_id: id });
+  else { await sb.from('follows').insert({ follower_id: state.me.id, following_id: id }); notify(id, `@${state.me.handle} started following you`); }
+}
+
+/* ---------- web push notifications ---------- */
+function urlB64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - base64.length % 4) % 4);
+  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64); const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+async function enablePush() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return alert('Notifications aren’t supported here. On iPhone, add the app to your Home Screen first, then try again.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return alert('Notifications were not enabled.');
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(CFG.VAPID_PUBLIC_KEY) });
+    const json = sub.toJSON();
+    await sb.from('push_subscriptions').upsert({ user_id: state.me.id, endpoint: json.endpoint, subscription: json }, { onConflict: 'endpoint' });
+    alert('🔔 Notifications enabled!');
+  } catch (e) { alert('Could not enable notifications: ' + e.message); }
+}
+async function notify(toUserId, body) {
+  if (!toUserId || !state.me || toUserId === state.me.id) return;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ toUserId, body }) });
+  } catch (_) {}
 }
 
 async function loadMySocial() {
@@ -873,6 +901,7 @@ function SettingsScreen() {
         <p class="text-white/30 text-xs mt-1">Add your PayPal so we can send your earnings once they're confirmed.</p>
       </div>
 
+      <button id="set-notify" type="button" class="w-full bg-white/10 border border-white/20 font-semibold py-3 rounded-xl">🔔 Enable notifications</button>
       <button id="set-save" class="w-full bg-brand-600 font-bold py-3.5 rounded-xl">Save changes</button>
       <p id="set-msg" class="text-center text-sm h-4"></p>
     </div>
@@ -1401,7 +1430,7 @@ async function toggleLike(postId) {
     btn.querySelector('.sr-like-count').textContent = likeCountOf(p);
   });
   if (liked) await sb.from('likes').delete().eq('user_id', state.me.id).eq('post_id', postId);
-  else await sb.from('likes').insert({ user_id: state.me.id, post_id: postId });
+  else { await sb.from('likes').insert({ user_id: state.me.id, post_id: postId }); if (p) notify(p.creator_id, `@${state.me.handle} liked your video ❤️`); }
 }
 
 async function toggleSave(postId) {
@@ -1467,7 +1496,7 @@ async function openComments(postId) {
     const { error } = await sb.from('comments').insert({ post_id: postId, user_id: state.me.id, handle: state.me.handle, text });
     if (error) { alert(error.message); return; }
     const p = state.posts.find(x => x.id === postId);
-    if (p) { if (p.comments?.[0]) p.comments[0].count++; else p.comments = [{ count: 1 }]; }
+    if (p) { if (p.comments?.[0]) p.comments[0].count++; else p.comments = [{ count: 1 }]; notify(p.creator_id, `@${state.me.handle} commented: ${text}`); }
     const badge = app.querySelector(`.cm-count[data-post="${postId}"]`);
     if (badge && p) badge.textContent = commentCountOf(p);
     await load();
@@ -1717,6 +1746,9 @@ function wireProfile() {
 function wireSettings() {
   let vertical = state.me.vertical;
   app.querySelector('.set-back').onclick = () => { activeTab = 'profile'; render(); };
+
+  const nb = app.querySelector('#set-notify');
+  if (nb) nb.onclick = enablePush;
 
   const av = app.querySelector('#set-avatar');
   if (av) av.onchange = async () => {

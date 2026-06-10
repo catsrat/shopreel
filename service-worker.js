@@ -1,5 +1,24 @@
 // ShopReel service worker — caches the app shell so it installs & loads fast.
-const CACHE = 'shopreel-v3';
+const CACHE = 'shopreel-v4';
+
+// Web Push: show the notification, and focus/open the app when tapped.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data.json(); } catch (_) { data = { title: 'ShopReel', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(data.title || 'ShopReel', {
+    body: data.body || '',
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    data: { url: data.url || './' }
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) { if ('focus' in c) return c.focus(); }
+    if (self.clients.openWindow) return self.clients.openWindow(e.notification.data?.url || './');
+  }));
+});
 const ASSETS = [
   './',
   './index.html',

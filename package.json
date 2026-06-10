@@ -5,7 +5,8 @@
   "type": "module",
   "description": "ShopReel — shoppable video PWA",
   "dependencies": {
+    "@supabase/supabase-js": "^2.48.1",
     "stripe": "^17.7.0",
-    "@supabase/supabase-js": "^2.48.1"
+    "web-push": "^3.6.7"
   }
 }

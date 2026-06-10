@@ -16,5 +16,8 @@ window.SHOPREEL_CONFIG = {
   OWNER_EMAIL: "monetizationfast@gmail.com",
 
   // Cloudflare Stream customer code (from your Stream dashboard playback URLs). Empty = use Supabase.
-  CF_CUSTOMER_CODE: "y6fl6i2azdg6qbge"
+  CF_CUSTOMER_CODE: "y6fl6i2azdg6qbge",
+
+  // Web Push public VAPID key (safe to expose). Private key goes in Vercel only.
+  VAPID_PUBLIC_KEY: "BE6dvkiyDjIfNb8CuK401BG5U7zTACGEQWkK4KUjzPoKaSxlAlrJm2mwPXz8rdgLOQs7ojqDGpxptSoy2tURCN4"
 };
