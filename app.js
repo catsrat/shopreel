@@ -441,12 +441,19 @@ function CreateScreen() {
     <p class="text-white/50 text-sm">Upload a video and tag your affiliate products.</p></div>
     <div id="cr-form" class="px-5 space-y-5">
       <div>
-        <p class="text-sm font-semibold mb-2">Video</p>
-        <label class="block border-2 border-dashed border-white/20 rounded-2xl p-6 text-center cursor-pointer">
-          <input id="cr-file" type="file" accept="video/*" class="hidden" />
-          <span id="cr-file-label" class="text-white/70 text-sm">${createFileObj ? '✅ ' + esc(createFileObj.name) : '📹 Tap to upload a video file'}</span>
-        </label>
-        <p class="text-center text-white/30 text-xs my-2">— or —</p>
+        <p class="text-sm font-semibold mb-2">Video <span class="text-white/40 font-normal">· max 2 min</span></p>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex flex-col items-center justify-center gap-1 border-2 border-dashed border-white/20 rounded-2xl py-5 cursor-pointer active:bg-white/5">
+            <input id="cr-record" type="file" accept="video/*" capture="environment" class="hidden" />
+            <span class="text-2xl">🎥</span><span class="text-white/70 text-sm font-semibold">Record</span>
+          </label>
+          <label class="flex flex-col items-center justify-center gap-1 border-2 border-dashed border-white/20 rounded-2xl py-5 cursor-pointer active:bg-white/5">
+            <input id="cr-pick" type="file" accept="video/*" class="hidden" />
+            <span class="text-2xl">📁</span><span class="text-white/70 text-sm font-semibold">Upload</span>
+          </label>
+        </div>
+        <p id="cr-file-label" class="text-center text-sm mt-2 ${createFileObj?'text-green-400':'text-white/40'}">${createFileObj ? '✅ ' + esc(createFileObj.name) : 'Record a new video, or pick one from your gallery'}</p>
+        <p class="text-center text-white/30 text-xs my-2">— or paste a link —</p>
         <input id="cr-url" value="${esc(d.url||'')}" placeholder="Paste a video URL (.mp4)" class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/15 outline-none focus:border-brand-500" />
       </div>
       <div>
@@ -1049,11 +1056,29 @@ function wireCreate() {
     snapshot();
   });
 
-  const fileInput = app.querySelector('#cr-file');
-  fileInput.onchange = () => {
-    createFileObj = fileInput.files[0] || null;
-    app.querySelector('#cr-file-label').textContent = createFileObj ? ('✅ ' + createFileObj.name) : '📹 Tap to upload a video file';
+  const fileLabel = app.querySelector('#cr-file-label');
+  const checkDuration = (file) => new Promise((resolve) => {
+    const v = document.createElement('video'); v.preload = 'metadata';
+    v.onloadedmetadata = () => { const d = v.duration; URL.revokeObjectURL(v.src); resolve(d); };
+    v.onerror = () => resolve(null);
+    v.src = URL.createObjectURL(file);
+  });
+  const onPick = async (input) => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const dur = await checkDuration(file);
+    if (dur && dur > 122) {   // 2-minute limit (+2s buffer)
+      createFileObj = null; input.value = '';
+      fileLabel.textContent = '⚠️ That video is longer than 2 minutes — please pick a shorter one.';
+      fileLabel.className = 'text-center text-sm mt-2 text-red-400';
+      return;
+    }
+    createFileObj = file;
+    fileLabel.textContent = '✅ ' + file.name + (dur ? ` · ${Math.round(dur)}s` : '');
+    fileLabel.className = 'text-center text-sm mt-2 text-green-400';
   };
+  app.querySelector('#cr-record').onchange = (e) => onPick(e.target);
+  app.querySelector('#cr-pick').onchange = (e) => onPick(e.target);
 
   // save text fields as the user types
   app.querySelector('#cr-form').addEventListener('input', snapshot);
