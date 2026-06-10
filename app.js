@@ -417,7 +417,7 @@ function PostCard(p) {
   const v = VERTICALS.find(x=>x.id===p.vertical);
   return `
   <div class="snap relative h-[100dvh] w-full bg-black flex items-end" data-post="${p.id}">
-    <video class="sr-video absolute inset-0 w-full h-full object-cover" muted loop playsinline preload="metadata" ${p.poster_url?`poster="${esc(p.poster_url)}"`:''} src="${esc(p.video_url)}"></video>
+    <video class="sr-video absolute inset-0 w-full h-full object-cover" muted loop playsinline preload="metadata" ${p.poster_url?`poster="${esc(p.poster_url)}"`:''} ${(p.video_url||'').includes('.m3u8') ? `data-hls="${esc(p.video_url)}"` : `src="${esc(p.video_url)}"`}></video>
     <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none"></div>
     <button class="sr-mute absolute top-4 right-4 z-20 w-10 h-10 rounded-full bg-black/40 backdrop-blur grid place-items-center text-lg">🔇</button>
 
@@ -952,6 +952,21 @@ function wireFeed() {
   }, { threshold: 0.6 });
   app.querySelectorAll('[data-post]').forEach(el => io.observe(el));
 
+  // Cloudflare Stream (HLS): native on Safari/iOS; load hls.js for other browsers.
+  (async function setupHls() {
+    const hlsVids = [...app.querySelectorAll('.sr-video[data-hls]')];
+    if (!hlsVids.length) return;
+    const nativeOk = hlsVids[0].canPlayType('application/vnd.apple.mpegurl') !== '';
+    if (!nativeOk && !window.Hls) { try { await _loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js'); } catch (_) {} }
+    hlsVids.forEach(v => {
+      if (v._hlsSet) return;
+      const url = v.getAttribute('data-hls');
+      if (v.canPlayType('application/vnd.apple.mpegurl') !== '') { v.src = url; v._hlsSet = true; }
+      else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls({ maxBufferLength: 12 }); h.loadSource(url); h.attachMedia(v); v._hlsSet = true; }
+    });
+    playVisible();
+  })();
+
   // Reliably start the video that's in view on first load (don't wait for a scroll/tap).
   function playVisible() {
     const mid = window.innerHeight * 0.5;
@@ -1290,18 +1305,33 @@ function wireCreate() {
     let videoUrl = url, posterUrl = null;
     if (createFileObj) {
       const stamp = Date.now();
-      const ext = (createFileObj.name.split('.').pop() || 'mp4').toLowerCase();
-      const path = `${state.me.id}/${stamp}.${ext}`;
-      const { error: upErr } = await sb.storage.from('videos').upload(path, createFileObj, { contentType: createFileObj.type });
-      if (upErr) return setErr('Video upload failed: ' + upErr.message);
-      videoUrl = sb.storage.from('videos').getPublicUrl(path).data.publicUrl;
-      // poster thumbnail (first frame): shows instantly while video loads + fixes black grid thumbnails
-      if (frames[0]) {
-        try {
-          const posterPath = `${state.me.id}/poster-${stamp}.jpg`;
-          await sb.storage.from('videos').upload(posterPath, dataUrlToBlob(frames[0]), { contentType: 'image/jpeg', upsert: true });
-          posterUrl = sb.storage.from('videos').getPublicUrl(posterPath).data.publicUrl;
-        } catch (_) { /* poster is optional */ }
+      if (CFG.CF_CUSTOMER_CODE) {
+        // ---- Cloudflare Stream: fast adaptive streaming + global CDN ----
+        const up = await fetch('/api/stream-upload-url', { method: 'POST' }).then(r => r.json()).catch(() => ({}));
+        if (up.enabled && up.uploadURL) {
+          const fd = new FormData(); fd.append('file', createFileObj);
+          const cf = await fetch(up.uploadURL, { method: 'POST', body: fd });
+          if (!cf.ok) return setErr('Video upload failed (stream).');
+          const base = `https://customer-${CFG.CF_CUSTOMER_CODE}.cloudflarestream.com/${up.uid}`;
+          videoUrl = `${base}/manifest/video.m3u8`;
+          posterUrl = `${base}/thumbnails/thumbnail.jpg?time=1s&height=600`;
+        } else {
+          return setErr('Stream upload unavailable — check Cloudflare setup.');
+        }
+      } else {
+        // ---- Supabase Storage (fallback) ----
+        const ext = (createFileObj.name.split('.').pop() || 'mp4').toLowerCase();
+        const path = `${state.me.id}/${stamp}.${ext}`;
+        const { error: upErr } = await sb.storage.from('videos').upload(path, createFileObj, { contentType: createFileObj.type });
+        if (upErr) return setErr('Video upload failed: ' + upErr.message);
+        videoUrl = sb.storage.from('videos').getPublicUrl(path).data.publicUrl;
+        if (frames[0]) {
+          try {
+            const posterPath = `${state.me.id}/poster-${stamp}.jpg`;
+            await sb.storage.from('videos').upload(posterPath, dataUrlToBlob(frames[0]), { contentType: 'image/jpeg', upsert: true });
+            posterUrl = sb.storage.from('videos').getPublicUrl(posterPath).data.publicUrl;
+          } catch (_) { /* poster is optional */ }
+        }
       }
     }
 

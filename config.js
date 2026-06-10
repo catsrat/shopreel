@@ -13,5 +13,8 @@ window.SHOPREEL_CONFIG = {
   AFFILIATE_TEMPLATE: "https://redirect.viglink.com/?format=go&key=652073351dbf60cf1dc9dd04ecab8ee7&u={URL}&cuid={SUBID}",
 
   // The owner account (you). Only this email sees the Payouts admin. Real security is server-side too.
-  OWNER_EMAIL: "monetizationfast@gmail.com"
+  OWNER_EMAIL: "monetizationfast@gmail.com",
+
+  // Cloudflare Stream customer code (from your Stream dashboard playback URLs). Empty = use Supabase.
+  CF_CUSTOMER_CODE: ""
 };
