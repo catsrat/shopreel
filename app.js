@@ -34,6 +34,8 @@ const PLANS = [
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const money = (n) => '€' + (Number(n) || 0).toFixed(2);
+// Hint Cloudflare's player to start at high quality (else short feed videos stay low-res).
+function streamUrl(u) { return (u && u.includes('cloudflarestream.com') && u.includes('.m3u8')) ? `${u}?clientBandwidthHint=8` : u; }
 
 // avatar: show the photo if set, otherwise a colored circle with the first letter
 function avatarHTML(url, name, sizeClass = 'w-9 h-9', textClass = 'font-bold') {
@@ -567,7 +569,7 @@ function openStoryViewer(startUid) {
     const bars = group.items.map((_, k) => `<div class="flex-1 h-0.5 rounded bg-white/30 overflow-hidden"><div class="h-full bg-white" style="width:${k < ii ? '100%' : '0'}" ${k === ii ? 'data-active' : ''}></div></div>`).join('');
     wrap.innerHTML = `
       ${isVideo
-        ? `<video class="sv-media absolute inset-0 w-full h-full object-contain bg-black" autoplay playsinline ${item.poster_url ? `poster="${esc(item.poster_url)}"` : ''} ${(item.media_url || '').includes('.m3u8') ? `data-hls="${esc(item.media_url)}"` : `src="${esc(item.media_url)}"`}></video>`
+        ? `<video class="sv-media absolute inset-0 w-full h-full object-contain bg-black" autoplay playsinline ${item.poster_url ? `poster="${esc(item.poster_url)}"` : ''} ${(item.media_url || '').includes('.m3u8') ? `data-hls="${esc(streamUrl(item.media_url))}"` : `src="${esc(item.media_url)}"`}></video>`
         : `<img class="absolute inset-0 w-full h-full object-contain bg-black" src="${esc(item.media_url)}" alt="" />`}
       <div class="absolute top-0 inset-x-0 p-3" style="padding-top:calc(0.5rem + env(safe-area-inset-top))">
         <div class="flex gap-1">${bars}</div>
@@ -620,7 +622,7 @@ function PostCard(p) {
   const v = VERTICALS.find(x=>x.id===p.vertical);
   return `
   <div class="snap relative h-[100dvh] w-full bg-black flex items-end" data-post="${p.id}">
-    <video class="sr-video absolute inset-0 w-full h-full object-cover" muted loop playsinline preload="metadata" ${p.poster_url?`poster="${esc(p.poster_url)}"`:''} ${(p.video_url||'').includes('.m3u8') ? `data-hls="${esc(p.video_url)}"` : `src="${esc(p.video_url)}"`}></video>
+    <video class="sr-video absolute inset-0 w-full h-full object-cover" muted loop playsinline preload="metadata" ${p.poster_url?`poster="${esc(p.poster_url)}"`:''} ${(p.video_url||'').includes('.m3u8') ? `data-hls="${esc(streamUrl(p.video_url))}"` : `src="${esc(p.video_url)}"`}></video>
     <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 pointer-events-none"></div>
     <button class="sr-mute absolute top-4 right-4 z-20 w-10 h-10 rounded-full bg-black/40 backdrop-blur grid place-items-center text-lg">🔇</button>
 
@@ -1372,7 +1374,7 @@ async function extractFrames(file) {
     v.addEventListener('loadeddata', async () => {
       try {
         const dur = (v.duration && isFinite(v.duration)) ? v.duration : 1;
-        const maxW = 512;
+        const maxW = 720;   // higher-res poster so the thumbnail isn't blurry while the video loads
         const scale = v.videoWidth > maxW ? maxW / v.videoWidth : 1;
         const canvas = document.createElement('canvas');
         canvas.width = Math.round((v.videoWidth || 320) * scale);
@@ -1382,7 +1384,7 @@ async function extractFrames(file) {
         for (const t of [dur * 0.1, dur * 0.5, dur * 0.9]) {
           await seekTo(v, t);
           ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-          frames.push(canvas.toDataURL('image/jpeg', 0.7));
+          frames.push(canvas.toDataURL('image/jpeg', 0.82));
         }
         settled = true; resolve(frames);
       } catch { fail(); }
